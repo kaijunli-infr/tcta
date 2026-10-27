@@ -3,6 +3,7 @@
     python compiler/prototype/dump_programs.py
 """
 import os
+from dataclasses import replace
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -17,7 +18,7 @@ import moe_data  # noqa: E402
 import moe_kernel  # noqa: E402
 from cut import lower_to_tile_tir  # noqa: E402
 from tcta import DeviceConfig  # noqa: E402
-from tcta.isa import SP  # noqa: E402
+from tcta.isa import DEVICE_CONFIG_C, SP  # noqa: E402
 from tile_tir_to_program import listing, tile_tir_to_program  # noqa: E402
 
 OUT = os.path.join(HERE, "dumps")
@@ -46,6 +47,12 @@ JOBS = [
     ("program_mla_inp6.txt", mla_kernel.build_mla_kernel(inp_slots=6), mla_kernel.SCOPE_MAP, 0, mla_kernel.DRAM,
      DeviceConfig(slots={SP.INP: 6, SP.WGT: 4, SP.ACC: 6, SP.VEC: 16, SP.STATE: 1}),
      "G1 with Q resident in 5 INP slots (phase-5 INP sweep): the Q loads leave the KV loop"),
+    ("program_moe_flat_ring12.txt", moe_kernel.build_moe_persistent_kernel(num_stages=12, flat_w13=True), moe_kernel.SCOPE_MAP, 0,
+     moe_data.DRAM, replace(DEVICE_CONFIG_C, fifo_depth=32),
+     "F2 at the phase-6 ring knee: [W1|W3] streamed as one flat 16-tile ring of depth 12 per token tile, x resident in 2 INP slots, config C (FIFO 32)"),
+    ("program_mla_kv2.txt", mla_kernel.build_mla_kernel(inp_slots=5, kv_unroll=2), mla_kernel.SCOPE_MAP, 0, mla_kernel.DRAM,
+     replace(DEVICE_CONFIG_C, fifo_depth=32),
+     "G1 with Q resident (INP 5) and the K ring over two KV tiles (10 WGT slots, phase-6 ring sweep), config C (FIFO 32)"),
 ]
 
 if __name__ == "__main__":

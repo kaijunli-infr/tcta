@@ -59,10 +59,15 @@ def build_mla_kernel(
     threads: int = 128,
     dtype: str = "float16",
     inp_slots: int = 2,
+    kv_unroll: int = 1,
 ):
     """`inp_slots` (phase 5 sweep): INP slots available for Q. 2 (the v1 descriptor): every Q chunk is
     re-streamed through a 2-slot ring at each KV tile. 3 or 4: the rope chunk (and chunk 0) stay resident,
-    the rest stream through a 2-slot ring. >= 5: all 4.5 Q tiles resident, loaded once before the KV loop."""
+    the rest stream through a 2-slot ring. >= 5: all 4.5 Q tiles resident, loaded once before the KV loop.
+
+    `kv_unroll` (phase 6, ring-depth sweep): the K ring holds the five chunks of `kv_unroll` KV tiles
+    (5 * kv_unroll WGT slots), so the LOAD queue can stream the next tiles' K while this tile is consumed;
+    the KV loop is unrolled by that factor so every slot index is static."""
     rows = n_h * bq
     assert rows == 64 and d_v % T_N == 0 and 0 < d_k - d_v <= T_N and seq_len % block_N == 0
     n_kv = seq_len // block_N
@@ -70,8 +75,8 @@ def build_mla_kernel(
     rope = d_k - d_v                        # the trailing 64-deep chunk
     scale = (1.0 / d_k) ** 0.5 * LOG2E
     accum = "float32"
-    if inp_slots != 2:
-        return _build_mla_resident(rows, n_kv, n_full, rope, scale, d_k, d_v, block_N, seq_len, threads, dtype, accum, inp_slots)
+    if inp_slots != 2 or kv_unroll != 1:
+        return _build_mla_resident(rows, n_kv, n_full, rope, scale, d_k, d_v, block_N, seq_len, threads, dtype, accum, inp_slots, kv_unroll)
 
     @T.prim_func
     def main(
@@ -136,11 +141,18 @@ def build_mla_kernel(
     return main
 
 
-def _build_mla_resident(rows, n_kv, n_full, rope, scale, d_k, d_v, block_N, seq_len, threads, dtype, accum, inp_slots):
+def _build_mla_resident(rows, n_kv, n_full, rope, scale, d_k, d_v, block_N, seq_len, threads, dtype, accum, inp_slots, kv_unroll=1):
     """The same kernel with `n_res` Q chunks resident in INP (the rope chunk first, then chunk 0, ...) and
     the remaining chunks streamed through a 2-slot ring (one slot if only one is left over). The chunk loop
-    is written in Python so every Q slot index is static."""
+    is written in Python so every Q slot index is static. The K ring has one slot per chunk (the rope chunk
+    included) of `kv_unroll` consecutive KV tiles."""
     n_chunks = n_full + 1                                   # rope + 4 full
+    u = kv_unroll
+    assert n_kv % u == 0
+    # u == 1: the phase-4/5 form, 4 K slots with the rope chunk in slot 3 before its V occupant arrives;
+    # u > 1: one slot per chunk, rope included, for each of the u tiles in the ring
+    per_tile = n_full if u == 1 else n_chunks
+    rope_slot = n_full - 1 if u == 1 else n_full
     n_res = min(n_chunks, max(0, inp_slots - 2)) if inp_slots < n_chunks else n_chunks
     ring = min(2, inp_slots - n_res)
     assert ring >= 1 or n_res == n_chunks
@@ -162,7 +174,7 @@ def _build_mla_resident(rows, n_kv, n_full, rope, scale, d_k, d_v, block_N, seq_
     ):
         with T.Kernel(1, threads=threads) as (bx,):
             Q_shared = T.alloc_shared([inp_slots, rows, T_N], dtype)
-            K_shared = T.alloc_shared([n_full, block_N, T_N], dtype)
+            K_shared = T.alloc_shared([per_tile * u, block_N, T_N], dtype)
             acc_s = T.alloc_fragment([rows, block_N], accum)
             acc_s_cast = T.alloc_fragment([rows, block_N], dtype)
             acc_o = T.alloc_fragment([rows, d_v], accum)
@@ -181,37 +193,40 @@ def _build_mla_resident(rows, n_kv, n_full, rope, scale, d_k, d_v, block_N, seq_
                 else:
                     T.copy(Q[:, ch * T_N:(ch + 1) * T_N], Q_shared[slot_of[ch], :, :])
 
-            for kv in T.serial(n_kv):
-                T.clear(acc_s)
-                for ch in order:
-                    if ch == n_full:
-                        if ch in streamed:
-                            T.copy(Q[:, d_v:d_k], Q_shared[slot_of[ch], :, 0:rope])
-                        T.copy(K[kv * block_N:(kv + 1) * block_N, d_v:d_k], K_shared[n_full - 1, :, 0:rope])
-                        T.gemm(Q_shared[slot_of[ch], :, 0:rope], K_shared[n_full - 1, :, 0:rope], acc_s, transpose_B=True)
-                    else:
-                        if ch in streamed:
-                            T.copy(Q[:, ch * T_N:(ch + 1) * T_N], Q_shared[slot_of[ch], :, :])
-                        T.copy(K[kv * block_N:(kv + 1) * block_N, ch * T_N:(ch + 1) * T_N], K_shared[ch, :, :])
-                        T.gemm(Q_shared[slot_of[ch], :, :], K_shared[ch, :, :], acc_s, transpose_B=True)
+            for kv2 in T.serial(n_kv // u):
+                for j in range(u):                              # Python-unrolled: static K slots j*5 .. j*5+4
+                    kv = kv2 * u + j
+                    base = j * per_tile
+                    T.clear(acc_s)
+                    for ch in order:
+                        if ch == n_full:
+                            if ch in streamed:
+                                T.copy(Q[:, d_v:d_k], Q_shared[slot_of[ch], :, 0:rope])
+                            T.copy(K[kv * block_N:(kv + 1) * block_N, d_v:d_k], K_shared[base + rope_slot, :, 0:rope])
+                            T.gemm(Q_shared[slot_of[ch], :, 0:rope], K_shared[base + rope_slot, :, 0:rope], acc_s, transpose_B=True)
+                        else:
+                            if ch in streamed:
+                                T.copy(Q[:, ch * T_N:(ch + 1) * T_N], Q_shared[slot_of[ch], :, :])
+                            T.copy(K[kv * block_N:(kv + 1) * block_N, ch * T_N:(ch + 1) * T_N], K_shared[base + ch, :, :])
+                            T.gemm(Q_shared[slot_of[ch], :, :], K_shared[base + ch, :, :], acc_s, transpose_B=True)
 
-                T.copy(scores_max, scores_max_prev)
-                T.fill(scores_max, -T.infinity(accum))
-                T.reduce_max(acc_s, scores_max, dim=1, clear=False)
-                for i in T.Parallel(rows):
-                    scores_max[i] = T.max(scores_max[i], scores_max_prev[i])
-                for i in T.Parallel(rows):
-                    scores_scale[i] = T.exp2(scores_max_prev[i] * scale - scores_max[i] * scale)
-                for i, j in T.Parallel(rows, block_N):
-                    acc_s[i, j] = T.exp2(acc_s[i, j] * scale - scores_max[i] * scale)
-                T.reduce_sum(acc_s, scores_sum, dim=1)
-                for i in T.Parallel(rows):
-                    logsum[i] = logsum[i] * scores_scale[i] + scores_sum[i]
-                T.copy(acc_s, acc_s_cast)
-                for i, j in T.Parallel(rows, d_v):
-                    acc_o[i, j] *= scores_scale[i]
-                for c in T.serial(n_full):
-                    T.gemm(acc_s_cast, K_shared[c, :, :], acc_o[:, c * T_N:(c + 1) * T_N])
+                    T.copy(scores_max, scores_max_prev)
+                    T.fill(scores_max, -T.infinity(accum))
+                    T.reduce_max(acc_s, scores_max, dim=1, clear=False)
+                    for i in T.Parallel(rows):
+                        scores_max[i] = T.max(scores_max[i], scores_max_prev[i])
+                    for i in T.Parallel(rows):
+                        scores_scale[i] = T.exp2(scores_max_prev[i] * scale - scores_max[i] * scale)
+                    for i, jj in T.Parallel(rows, block_N):
+                        acc_s[i, jj] = T.exp2(acc_s[i, jj] * scale - scores_max[i] * scale)
+                    T.reduce_sum(acc_s, scores_sum, dim=1)
+                    for i in T.Parallel(rows):
+                        logsum[i] = logsum[i] * scores_scale[i] + scores_sum[i]
+                    T.copy(acc_s, acc_s_cast)
+                    for i, jj in T.Parallel(rows, d_v):
+                        acc_o[i, jj] *= scores_scale[i]
+                    for c in range(n_full):
+                        T.gemm(acc_s_cast, K_shared[base + c, :, :], acc_o[:, c * T_N:(c + 1) * T_N])
 
             for i, j in T.Parallel(rows, d_v):
                 acc_o[i, j] /= logsum[i]

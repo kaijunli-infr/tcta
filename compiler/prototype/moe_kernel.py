@@ -68,8 +68,13 @@ COMBINE_SCOPE_MAP = {"acc": "tcta.acc", "part": "tcta.acc", "idx_s": "tcta.vec"}
 ROUTER_SCOPE_MAP = {"row": "tcta.vec", "idx": "tcta.vec"}
 
 
-def _expert_macros(d, d_ff, experts, t_max, block_M, block_K, block_N, num_stages, weight_format, dtype):
-    """The macros shared by the per-expert and the persistent kernels."""
+def _expert_macros(d, d_ff, experts, t_max, block_M, block_K, block_N, num_stages, weight_format, dtype, flat_w13=False):
+    """The macros shared by the per-expert and the persistent kernels.
+
+    `flat_w13` (phase 6, ring-depth sweep): the four token-row gathers of a tile go into four INP slots up front
+    and the [W1 | W3] weight stream is one pipelined loop over all 16 (K-tile, N-tile) weight tiles, so the
+    WGT ring can be as deep as 16 (the W2 stream is 8 tiles). The default keeps the phase-3 form (2 INP slots,
+    a 4-tile stream per K-tile, ring <= 4)."""
     assert weight_format in ("bf16", "f4.b32")
     assert d % block_K == 0 and (2 * d_ff) % block_N == 0 and d_ff % block_K == 0 and d % block_N == 0
     n_k = d // block_K                 # 4 K-tiles of a token row
@@ -112,8 +117,8 @@ def _expert_macros(d, d_ff, experts, t_max, block_M, block_K, block_N, num_stage
         statements inside a guard): the guarded accumulator fill if `head` (with the gemm), payload copy,
         scales copy, dequant, gemm, and the `tail` statements of the guarded tail (with the gemm)."""
         if not f4:
-            return T.Pipelined(n, num_stages=num_stages)
-        s = num_stages - 1
+            return T.Pipelined(n, num_stages=min(num_stages, n))
+        s = min(num_stages, n) - 1                     # a ring deeper than the loop is the loop
         stage = ([s] if head else []) + [0, 0, 0, s] + [s] * tail
         return T.Pipelined(n, order=list(range(len(stage))), stage=stage)
 
@@ -130,16 +135,27 @@ def _expert_macros(d, d_ff, experts, t_max, block_M, block_K, block_N, num_stage
         """One 64-token tile of expert e: gather, [W1|W3] gemms, SwiGLU, W2 gemms, scale, scatter."""
         T.copy(idx[e, t * block_M:(t + 1) * block_M], idx_s)
         T.fill(H, 0)
-        # [W1 | W3]: per K-tile, the gather (LOAD.IDX, -1 rows read as zero) into the INP slot of the
-        # K-tile's parity, then the pipelined stream over the N-tiles. The gather stays outside the
-        # pipelined loop: inside it as a guarded stage-0 statement TileLang multi-buffers it as if it ran
-        # every iteration and the gemm reads a slot the guarded gather never wrote (recorded in E2).
-        for kk in T.serial(n_k):
-            for i, j in T.Parallel(block_M, block_K):
-                x_s[kk % 2, i, j] = T.if_then_else(idx_s[i] >= 0, x[idx_s[i], kk * block_K + j], T.cast(0, dtype))
-            for nn in weight_stream(n_h, head=False, tail=0):
+        if flat_w13:
+            # phase 6: all four gathers first (four INP slots), then one weight stream over the 16 tiles
+            for kk in T.serial(n_k):
+                for i, j in T.Parallel(block_M, block_K):
+                    x_s[kk, i, j] = T.if_then_else(idx_s[i] >= 0, x[idx_s[i], kk * block_K + j], T.cast(0, dtype))
+            for m in weight_stream(n_k * n_h, head=False, tail=0):
+                kk = m // n_h
+                nn = m % n_h
                 load(W13t, Wq_s, Ws_s, W_s, e, kk * block_K, nn * block_N)
-                T.gemm(x_s[kk % 2, :, :], W_s, H[nn, :, :])
+                T.gemm(x_s[kk, :, :], W_s, H[nn, :, :])
+        else:
+            # [W1 | W3]: per K-tile, the gather (LOAD.IDX, -1 rows read as zero) into the INP slot of the
+            # K-tile's parity, then the pipelined stream over the N-tiles. The gather stays outside the
+            # pipelined loop: inside it as a guarded stage-0 statement TileLang multi-buffers it as if it ran
+            # every iteration and the gemm reads a slot the guarded gather never wrote (recorded in E2).
+            for kk in T.serial(n_k):
+                for i, j in T.Parallel(block_M, block_K):
+                    x_s[kk % 2, i, j] = T.if_then_else(idx_s[i] >= 0, x[idx_s[i], kk * block_K + j], T.cast(0, dtype))
+                for nn in weight_stream(n_h, head=False, tail=0):
+                    load(W13t, Wq_s, Ws_s, W_s, e, kk * block_K, nn * block_N)
+                    T.gemm(x_s[kk % 2, :, :], W_s, H[nn, :, :])
         # SwiGLU: silu(h1) * h3 = sigmoid(h1) * (h1 * h3), in place
         for nn in T.serial(n_k2):
             for i, j in T.Parallel(block_M, block_N):
@@ -177,7 +193,8 @@ def _expert_macros(d, d_ff, experts, t_max, block_M, block_K, block_N, num_stage
                     if dst_s[i] >= 0:
                         Yp[dst_s[i], no * block_N + j] = out[no % 2, i, j]
 
-    return dict(f4=f4, rows=rows, accum=accum, n_h=n_h, n_k2=n_k2, count=count, token_tile=token_tile)
+    return dict(f4=f4, rows=rows, accum=accum, n_h=n_h, n_k2=n_k2, count=count, token_tile=token_tile,
+                x_slots=n_k if flat_w13 else 2)
 
 
 def build_moe_expert_kernel(
@@ -276,8 +293,16 @@ def build_moe_persistent_kernel(
     weight_format: str = "f4.b32",
     dtype: str = "float16",
     prefetch: bool = True,
+    flat_w13: bool = False,
+    expert_base: int = 0,
+    n_experts: int | None = None,
 ):
     """All experts in one program (grid = 1): `for e in T.serial(experts)` around the token-tile loop.
+
+    Phase 6: `flat_w13` (see `_expert_macros`) lets the WGT ring go to 16; `expert_base` / `n_experts` make the
+    program stream the expert subset [expert_base, expert_base + n_experts) over the same DRAM image, so c
+    cores can each run a disjoint subset (I3). The prefetch of the subset's last expert reads the list of
+    expert `expert_base + n_experts` (a real expert's, or the -1 pad row at E); it is never used.
 
     With `prefetch` (default) experts are handled in pairs so that the token count of expert e+1
     is produced into the other count buffer (register) while expert e runs (the idx table has a
@@ -286,10 +311,11 @@ def build_moe_persistent_kernel(
     (half the body, one count register, the LOOP waits for the VCOUNT). Same buffers as
     `build_moe_expert_kernel`.
     """
-    assert experts % 2 == 0 or not prefetch
-    M = _expert_macros(d, d_ff, experts, t_max, block_M, block_K, block_N, num_stages, weight_format, dtype)
+    n_experts = experts if n_experts is None else n_experts
+    assert expert_base + n_experts <= experts and (n_experts % 2 == 0 or not prefetch)
+    M = _expert_macros(d, d_ff, experts, t_max, block_M, block_K, block_N, num_stages, weight_format, dtype, flat_w13)
     f4, rows, accum, count, token_tile = M["f4"], M["rows"], M["accum"], M["count"], M["token_tile"]
-    n_h, n_k2 = M["n_h"], M["n_k2"]
+    n_h, n_k2, x_slots = M["n_h"], M["n_k2"], M["x_slots"]
 
     @T.macro
     def expert(x, W13t, W2t, idx, dst, w, Yp, e, n_cur, n_next, idx_all, mask,
@@ -300,7 +326,7 @@ def build_moe_persistent_kernel(
 
     @T.macro
     def body(x, W13t, W2t, idx, dst, w, Yp):
-        x_s = T.alloc_shared([2, block_M, block_K], dtype)
+        x_s = T.alloc_shared([x_slots, block_M, block_K], dtype)
         W_s = T.alloc_shared([block_K, block_N], dtype)
         Wq_s = T.alloc_shared([block_K, block_N // 2], "uint8") if f4 else None
         Ws_s = T.alloc_shared([block_K // 32, block_N // 32], "uint8") if f4 else None
@@ -322,16 +348,16 @@ def build_moe_persistent_kernel(
         mask_b = T.alloc_fragment([rows], "int32")
         n_a = T.alloc_fragment([1], "int32")
         n_b = T.alloc_fragment([1], "int32")
-        count(idx, 0, idx_b, mask_b, n_a)
-        for ee in T.serial(experts // 2):
-            expert(x, W13t, W2t, idx, dst, w, Yp, 2 * ee, n_a, n_b, idx_a, mask_a,
+        count(idx, expert_base, idx_b, mask_b, n_a)
+        for ee in T.serial(n_experts // 2):
+            expert(x, W13t, W2t, idx, dst, w, Yp, expert_base + 2 * ee, n_a, n_b, idx_a, mask_a,
                    x_s, W_s, Wq_s, Ws_s, H, Hc, out, idx_s, dst_s, w_s, w_c)
-            expert(x, W13t, W2t, idx, dst, w, Yp, 2 * ee + 1, n_b, n_a, idx_b, mask_b,
+            expert(x, W13t, W2t, idx, dst, w, Yp, expert_base + 2 * ee + 1, n_b, n_a, idx_b, mask_b,
                    x_s, W_s, Wq_s, Ws_s, H, Hc, out, idx_s, dst_s, w_s, w_c)
 
     @T.macro
     def body_single(x, W13t, W2t, idx, dst, w, Yp):
-        x_s = T.alloc_shared([2, block_M, block_K], dtype)
+        x_s = T.alloc_shared([x_slots, block_M, block_K], dtype)
         W_s = T.alloc_shared([block_K, block_N], dtype)
         Wq_s = T.alloc_shared([block_K, block_N // 2], "uint8") if f4 else None
         Ws_s = T.alloc_shared([block_K // 32, block_N // 32], "uint8") if f4 else None
@@ -345,10 +371,10 @@ def build_moe_persistent_kernel(
         idx_all = T.alloc_fragment([rows], "int32")
         mask = T.alloc_fragment([rows], "int32")
         n = T.alloc_fragment([1], "int32")
-        for e in T.serial(experts):
-            count(idx, e, idx_all, mask, n)
+        for e in T.serial(n_experts):
+            count(idx, expert_base + e, idx_all, mask, n)
             for t in T.serial(T.ceildiv(n[0], block_M)):
-                token_tile(x, W13t, W2t, idx, dst, w, Yp, e, t, x_s, W_s, Wq_s, Ws_s, H, Hc, out, idx_s, dst_s, w_s, w_c)
+                token_tile(x, W13t, W2t, idx, dst, w, Yp, expert_base + e, t, x_s, W_s, Wq_s, Ws_s, H, Hc, out, idx_s, dst_s, w_s, w_c)
 
     if not prefetch:
         body = body_single

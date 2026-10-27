@@ -102,9 +102,15 @@ class DeviceConfig:
         SP.INP: 2, SP.WGT: 4, SP.ACC: 6, SP.VEC: 16, SP.STATE: 1})
     # VEC slots >= this index are row tiles [1, T_VR]; below are 2-D [T_M, T_V]
     vec_row_slot_start: int = 8
-    fifo_depth: int = 4
+    fifo_depth: int = 8                     # v0.1.4: 8 on every edge (4 deadlocks the KDA program)
     t_deadlock: int = 1_000_000
     n_regs: int = 16
+
+
+# ISA §11 descriptors (v0.1.4). ACC "8 + 2 wide" is 16 slot indices (a wide accumulator is 4 consecutive slots).
+DEVICE_KV260 = DeviceConfig()
+DEVICE_CONFIG_C = DeviceConfig(slots={SP.INP: 5, SP.WGT: 32, SP.ACC: 16, SP.VEC: 64, SP.STATE: 2}, fifo_depth=8,
+                               t_deadlock=10_000_000)
 
 
 class Fault(Exception):

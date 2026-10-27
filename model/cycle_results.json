@@ -13141,5 +13141,3948 @@
   "mla_cycles_per_tile": 3483.25,
   "source": "model/sweeps.py channels sweep, config-C timing with request_channels=8 (what-if)"
  },
- "wall_s": 69.75187134742737
+ "wall_s": 69.75187134742737,
+ "mlp_ring": [
+  {
+   "family": "MoE",
+   "timing": "config-C-phase5",
+   "ok": true,
+   "err": 0.0030918627255613596,
+   "cycles": 433718,
+   "us": 433.718,
+   "per_unit": 13553.6875,
+   "units": 32,
+   "unit_name": "token tile",
+   "eta_mfu": 0.11332709271923232,
+   "eta_bw": 0.14557385213433613,
+   "macs": 805306368,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "per_queue": {
+    "LOAD": {
+     "n": 1025,
+     "busy": 406800,
+     "stall_token": 430399,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 768,
+     "busy": 196608,
+     "stall_token": 349590,
+     "stall_bank": 81632,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "VEC": {
+     "n": 449,
+     "busy": 106594,
+     "stall_token": 317920,
+     "stall_bank": 8160,
+     "stall_fifo": 0,
+     "wait_unit": 106017
+    },
+    "STORE": {
+     "n": 128,
+     "busy": 98304,
+     "stall_token": 432208,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "LOAD->VEC": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "MMA->LOAD": {
+     "pushes": 771,
+     "pops": 771,
+     "max_level": 3,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "LOAD->MMA": {
+     "pushes": 896,
+     "pops": 896,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "VEC->STORE": {
+     "pushes": 128,
+     "pops": 128,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "STORE->LOAD": {
+     "pushes": 33,
+     "pops": 33,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "VEC->LOAD": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "LOAD->STORE": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "MMA->VEC": {
+     "pushes": 256,
+     "pops": 256,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "STORE->MMA": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "STORE->VEC": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "VEC->MMA": {
+     "pushes": 258,
+     "pops": 258,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    }
+   },
+   "channels": {
+    "read0": 66824,
+    "read1": 39008,
+    "read2": 39432,
+    "read3": 61792,
+    "read4": 62032,
+    "read5": 61520,
+    "read6": 38560,
+    "read7": 37632,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "banks": {
+    "INP/bank0": 32640,
+    "INP/bank1": 32640,
+    "ACC/bank5": 8192,
+    "VEC/bank1": 8160,
+    "ACC/bank4": 8160
+   },
+   "fe_loop_wait": 403734,
+   "wall_s": 1.7623999118804932,
+   "mean_load2d": 534.3277591973244,
+   "mean_loadidx": 1836,
+   "n_instrs": 525,
+   "inflight_mean": 35795.188578753936,
+   "inflight_p90": 72192,
+   "channel_util": 0.11724207895452805,
+   "stall_arbiter": 0,
+   "stall_arbiter_gather": 25559040,
+   "gather_bound": {
+    "window": 81920,
+    "channel": 147200,
+    "requests": 147456
+   },
+   "static_levels": {
+    "LOAD->MMA": 3,
+    "LOAD->STORE": 1,
+    "LOAD->VEC": 1,
+    "MMA->LOAD": 3,
+    "MMA->VEC": 4,
+    "STORE->LOAD": 1,
+    "STORE->MMA": 2,
+    "STORE->VEC": 2,
+    "VEC->LOAD": 2,
+    "VEC->MMA": 6,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 3,
+   "push_blocked": 0,
+   "form": "phase-3 form, phase-5 descriptor",
+   "ring": 3,
+   "fifo": 16
+  },
+  {
+   "family": "MoE",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0030918627255613596,
+   "cycles": 319178,
+   "us": 319.178,
+   "per_unit": 9974.3125,
+   "units": 32,
+   "unit_name": "token tile",
+   "eta_mfu": 0.15399557613619985,
+   "eta_bw": 0.19781438570327528,
+   "macs": 805306368,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "per_queue": {
+    "LOAD": {
+     "n": 1025,
+     "busy": 406800,
+     "stall_token": 316322,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 768,
+     "busy": 196608,
+     "stall_token": 298657,
+     "stall_bank": 18384,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "VEC": {
+     "n": 449,
+     "busy": 106594,
+     "stall_token": 203731,
+     "stall_bank": 8160,
+     "stall_fifo": 0,
+     "wait_unit": 106017
+    },
+    "STORE": {
+     "n": 128,
+     "busy": 98304,
+     "stall_token": 318027,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "LOAD->VEC": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "MMA->LOAD": {
+     "pushes": 771,
+     "pops": 771,
+     "max_level": 3,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "LOAD->MMA": {
+     "pushes": 896,
+     "pops": 896,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->STORE": {
+     "pushes": 128,
+     "pops": 128,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->LOAD": {
+     "pushes": 33,
+     "pops": 33,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->LOAD": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "LOAD->STORE": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "MMA->VEC": {
+     "pushes": 256,
+     "pops": 256,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->MMA": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->VEC": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->MMA": {
+     "pushes": 258,
+     "pops": 258,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    }
+   },
+   "channels": {
+    "read0": 49692,
+    "read1": 49692,
+    "read2": 53768,
+    "read3": 53768,
+    "read4": 45284,
+    "read5": 45284,
+    "read6": 54656,
+    "read7": 54656,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "banks": {
+    "ACC/bank5": 10224,
+    "VEC/bank1": 8160,
+    "ACC/bank4": 8160
+   },
+   "fe_loop_wait": 296393,
+   "wall_s": 1.7944321632385254,
+   "mean_load2d": 417.1638795986622,
+   "mean_loadidx": 1069,
+   "n_instrs": 525,
+   "inflight_mean": 30457.739117357713,
+   "inflight_p90": 71168,
+   "channel_util": 0.15931549166922532,
+   "stall_arbiter": 0,
+   "stall_arbiter_gather": 0,
+   "gather_bound": {
+    "window": 0,
+    "channel": 0,
+    "requests": 147456
+   },
+   "static_levels": {
+    "LOAD->MMA": 3,
+    "LOAD->STORE": 1,
+    "LOAD->VEC": 1,
+    "MMA->LOAD": 3,
+    "MMA->VEC": 4,
+    "STORE->LOAD": 1,
+    "STORE->MMA": 2,
+    "STORE->VEC": 2,
+    "VEC->LOAD": 2,
+    "VEC->MMA": 6,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 3,
+   "push_blocked": 0,
+   "form": "phase-3 form",
+   "ring": 3,
+   "fifo": 8
+  },
+  {
+   "family": "MoE",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0030918627255613596,
+   "cycles": 273948,
+   "us": 273.948,
+   "per_unit": 8560.875,
+   "units": 32,
+   "unit_name": "token tile",
+   "eta_mfu": 0.17942091199789742,
+   "eta_bw": 0.23047439660081476,
+   "macs": 805306368,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "per_queue": {
+    "LOAD": {
+     "n": 1025,
+     "busy": 406800,
+     "stall_token": 271092,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 768,
+     "busy": 196608,
+     "stall_token": 253424,
+     "stall_bank": 18384,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "VEC": {
+     "n": 449,
+     "busy": 106594,
+     "stall_token": 158501,
+     "stall_bank": 8160,
+     "stall_fifo": 0,
+     "wait_unit": 106017
+    },
+    "STORE": {
+     "n": 128,
+     "busy": 98304,
+     "stall_token": 272797,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "LOAD->VEC": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "MMA->LOAD": {
+     "pushes": 771,
+     "pops": 771,
+     "max_level": 3,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "LOAD->MMA": {
+     "pushes": 896,
+     "pops": 896,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->STORE": {
+     "pushes": 128,
+     "pops": 128,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->LOAD": {
+     "pushes": 33,
+     "pops": 33,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->LOAD": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "LOAD->STORE": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "MMA->VEC": {
+     "pushes": 256,
+     "pops": 256,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->MMA": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->VEC": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->MMA": {
+     "pushes": 258,
+     "pops": 258,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    }
+   },
+   "channels": {
+    "read0": 50888,
+    "read1": 50884,
+    "read2": 50944,
+    "read3": 50944,
+    "read4": 50692,
+    "read5": 50692,
+    "read6": 50880,
+    "read7": 50876,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "banks": {
+    "ACC/bank5": 10224,
+    "VEC/bank1": 8160,
+    "ACC/bank4": 8160
+   },
+   "fe_loop_wait": 253978,
+   "wall_s": 1.7888226509094238,
+   "mean_load2d": 432.02564102564105,
+   "mean_loadidx": 1101.2109375,
+   "n_instrs": 525,
+   "inflight_mean": 36645.777446814725,
+   "inflight_p90": 185600,
+   "channel_util": 0.1856191686013404,
+   "stall_arbiter": 13331,
+   "stall_arbiter_gather": 3184960,
+   "gather_bound": {
+    "window": 0,
+    "channel": 71040,
+    "requests": 147456
+   },
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "LOAD->STORE": 1,
+    "LOAD->VEC": 1,
+    "MMA->LOAD": 3,
+    "MMA->VEC": 4,
+    "STORE->LOAD": 1,
+    "STORE->MMA": 2,
+    "STORE->VEC": 2,
+    "VEC->LOAD": 2,
+    "VEC->MMA": 6,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 3,
+   "push_blocked": 0,
+   "form": "flat [W1|W3] stream",
+   "ring": 3,
+   "fifo": 8
+  },
+  {
+   "family": "MoE",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0030918627255613596,
+   "cycles": 227728,
+   "us": 227.728,
+   "per_unit": 7116.5,
+   "units": 32,
+   "unit_name": "token tile",
+   "eta_mfu": 0.21583643645050235,
+   "eta_bw": 0.2772518091758589,
+   "macs": 805306368,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "per_queue": {
+    "LOAD": {
+     "n": 1025,
+     "busy": 406800,
+     "stall_token": 223823,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 768,
+     "busy": 196608,
+     "stall_token": 176913,
+     "stall_bank": 24480,
+     "stall_fifo": 0,
+     "wait_unit": 24192
+    },
+    "VEC": {
+     "n": 449,
+     "busy": 106594,
+     "stall_token": 112281,
+     "stall_bank": 8160,
+     "stall_fifo": 0,
+     "wait_unit": 106017
+    },
+    "STORE": {
+     "n": 128,
+     "busy": 98304,
+     "stall_token": 226574,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "LOAD->VEC": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "MMA->LOAD": {
+     "pushes": 774,
+     "pops": 774,
+     "max_level": 6,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "LOAD->MMA": {
+     "pushes": 896,
+     "pops": 896,
+     "max_level": 6,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->STORE": {
+     "pushes": 128,
+     "pops": 128,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->LOAD": {
+     "pushes": 33,
+     "pops": 33,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->LOAD": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "LOAD->STORE": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "MMA->VEC": {
+     "pushes": 256,
+     "pops": 256,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->MMA": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->VEC": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->MMA": {
+     "pushes": 258,
+     "pops": 258,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    }
+   },
+   "channels": {
+    "read0": 50824,
+    "read1": 50820,
+    "read2": 50944,
+    "read3": 50944,
+    "read4": 50820,
+    "read5": 50820,
+    "read6": 50816,
+    "read7": 50812,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "banks": {
+    "ACC/bank5": 16320,
+    "VEC/bank1": 8160,
+    "ACC/bank4": 8160
+   },
+   "fe_loop_wait": 210575,
+   "wall_s": 1.765535593032837,
+   "mean_load2d": 446.8294314381271,
+   "mean_loadidx": 1101.2109375,
+   "n_instrs": 531,
+   "inflight_mean": 44277.599381718544,
+   "inflight_p90": 188416,
+   "channel_util": 0.22329270006323332,
+   "stall_arbiter": 26610,
+   "stall_arbiter_gather": 3184960,
+   "gather_bound": {
+    "window": 0,
+    "channel": 71040,
+    "requests": 147456
+   },
+   "static_levels": {
+    "LOAD->MMA": 6,
+    "LOAD->STORE": 1,
+    "LOAD->VEC": 1,
+    "MMA->LOAD": 6,
+    "MMA->VEC": 4,
+    "STORE->LOAD": 1,
+    "STORE->MMA": 2,
+    "STORE->VEC": 2,
+    "VEC->LOAD": 2,
+    "VEC->MMA": 6,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 6,
+   "push_blocked": 0,
+   "form": "flat [W1|W3] stream",
+   "ring": 6,
+   "fifo": 8
+  },
+  {
+   "family": "MoE",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0030918627255613596,
+   "cycles": 207386,
+   "us": 207.386,
+   "per_unit": 6480.8125,
+   "units": 32,
+   "unit_name": "token tile",
+   "eta_mfu": 0.23700731968406738,
+   "eta_bw": 0.30444678039983414,
+   "macs": 805306368,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "per_queue": {
+    "LOAD": {
+     "n": 1025,
+     "busy": 406800,
+     "stall_token": 185726,
+     "stall_bank": 0,
+     "stall_fifo": 2061,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 768,
+     "busy": 196608,
+     "stall_token": 148501,
+     "stall_bank": 24480,
+     "stall_fifo": 0,
+     "wait_unit": 32256
+    },
+    "VEC": {
+     "n": 449,
+     "busy": 106594,
+     "stall_token": 91939,
+     "stall_bank": 8160,
+     "stall_fifo": 0,
+     "wait_unit": 106017
+    },
+    "STORE": {
+     "n": 128,
+     "busy": 98304,
+     "stall_token": 206231,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "LOAD->VEC": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "MMA->LOAD": {
+     "pushes": 776,
+     "pops": 776,
+     "max_level": 8,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "LOAD->MMA": {
+     "pushes": 896,
+     "pops": 896,
+     "max_level": 8,
+     "push_blocked_cycles": 2061,
+     "depth": 8
+    },
+    "VEC->STORE": {
+     "pushes": 128,
+     "pops": 128,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->LOAD": {
+     "pushes": 33,
+     "pops": 33,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->LOAD": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "LOAD->STORE": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "MMA->VEC": {
+     "pushes": 256,
+     "pops": 256,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->MMA": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->VEC": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->MMA": {
+     "pushes": 258,
+     "pops": 258,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    }
+   },
+   "channels": {
+    "read0": 50824,
+    "read1": 50824,
+    "read2": 50828,
+    "read3": 50832,
+    "read4": 50932,
+    "read5": 50928,
+    "read6": 50816,
+    "read7": 50816,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "banks": {
+    "ACC/bank5": 16320,
+    "VEC/bank1": 8160,
+    "ACC/bank4": 8160
+   },
+   "fe_loop_wait": 191513,
+   "wall_s": 1.7136175632476807,
+   "mean_load2d": 538.9041248606466,
+   "mean_loadidx": 1069,
+   "n_instrs": 535,
+   "inflight_mean": 50909.5117317466,
+   "inflight_p90": 214528,
+   "channel_util": 0.2451949504788173,
+   "stall_arbiter": 109201,
+   "stall_arbiter_gather": 0,
+   "gather_bound": {
+    "window": 0,
+    "channel": 0,
+    "requests": 147456
+   },
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "LOAD->STORE": 1,
+    "LOAD->VEC": 1,
+    "MMA->LOAD": 12,
+    "MMA->VEC": 4,
+    "STORE->LOAD": 1,
+    "STORE->MMA": 2,
+    "STORE->VEC": 2,
+    "VEC->LOAD": 2,
+    "VEC->MMA": 6,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 8,
+   "push_blocked": 2061,
+   "form": "flat [W1|W3] stream",
+   "ring": 12,
+   "fifo": 8
+  },
+  {
+   "family": "MoE",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0030918627255613596,
+   "cycles": 215986,
+   "us": 215.986,
+   "per_unit": 6749.5625,
+   "units": 32,
+   "unit_name": "token tile",
+   "eta_mfu": 0.22757030548276277,
+   "eta_bw": 0.29232450251405184,
+   "macs": 805306368,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "per_queue": {
+    "LOAD": {
+     "n": 1025,
+     "busy": 406800,
+     "stall_token": 193786,
+     "stall_bank": 0,
+     "stall_fifo": 2061,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 768,
+     "busy": 196608,
+     "stall_token": 113356,
+     "stall_bank": 24480,
+     "stall_fifo": 38004,
+     "wait_unit": 32256
+    },
+    "VEC": {
+     "n": 449,
+     "busy": 106594,
+     "stall_token": 100539,
+     "stall_bank": 8160,
+     "stall_fifo": 0,
+     "wait_unit": 106017
+    },
+    "STORE": {
+     "n": 128,
+     "busy": 98304,
+     "stall_token": 214831,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "LOAD->VEC": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "MMA->LOAD": {
+     "pushes": 784,
+     "pops": 784,
+     "max_level": 8,
+     "push_blocked_cycles": 38004,
+     "depth": 8
+    },
+    "LOAD->MMA": {
+     "pushes": 896,
+     "pops": 896,
+     "max_level": 8,
+     "push_blocked_cycles": 2061,
+     "depth": 8
+    },
+    "VEC->STORE": {
+     "pushes": 128,
+     "pops": 128,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->LOAD": {
+     "pushes": 33,
+     "pops": 33,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->LOAD": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "LOAD->STORE": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "MMA->VEC": {
+     "pushes": 256,
+     "pops": 256,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->MMA": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "STORE->VEC": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->MMA": {
+     "pushes": 258,
+     "pops": 258,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    }
+   },
+   "channels": {
+    "read0": 50904,
+    "read1": 50896,
+    "read2": 50908,
+    "read3": 50832,
+    "read4": 50816,
+    "read5": 50816,
+    "read6": 50816,
+    "read7": 50812,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "banks": {
+    "ACC/bank5": 16320,
+    "VEC/bank1": 8160,
+    "ACC/bank4": 8160
+   },
+   "fe_loop_wait": 199571,
+   "wall_s": 1.706244945526123,
+   "mean_load2d": 545.5072463768116,
+   "mean_loadidx": 1069,
+   "n_instrs": 551,
+   "inflight_mean": 49211.118498421194,
+   "inflight_p90": 210944,
+   "channel_util": 0.23543192614336114,
+   "stall_arbiter": 115124,
+   "stall_arbiter_gather": 0,
+   "gather_bound": {
+    "window": 0,
+    "channel": 0,
+    "requests": 147456
+   },
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "LOAD->STORE": 1,
+    "LOAD->VEC": 1,
+    "MMA->LOAD": 16,
+    "MMA->VEC": 4,
+    "STORE->LOAD": 1,
+    "STORE->MMA": 2,
+    "STORE->VEC": 2,
+    "VEC->LOAD": 2,
+    "VEC->MMA": 6,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 8,
+   "push_blocked": 40065,
+   "form": "flat [W1|W3] stream",
+   "ring": 16,
+   "fifo": 8
+  },
+  {
+   "family": "MoE",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0030918627255613596,
+   "cycles": 273948,
+   "us": 273.948,
+   "per_unit": 8560.875,
+   "units": 32,
+   "unit_name": "token tile",
+   "eta_mfu": 0.17942091199789742,
+   "eta_bw": 0.23047439660081476,
+   "macs": 805306368,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "per_queue": {
+    "LOAD": {
+     "n": 1025,
+     "busy": 406800,
+     "stall_token": 271092,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 768,
+     "busy": 196608,
+     "stall_token": 253424,
+     "stall_bank": 18384,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "VEC": {
+     "n": 449,
+     "busy": 106594,
+     "stall_token": 158501,
+     "stall_bank": 8160,
+     "stall_fifo": 0,
+     "wait_unit": 106017
+    },
+    "STORE": {
+     "n": 128,
+     "busy": 98304,
+     "stall_token": 272797,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "LOAD->VEC": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "MMA->LOAD": {
+     "pushes": 771,
+     "pops": 771,
+     "max_level": 3,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "LOAD->MMA": {
+     "pushes": 896,
+     "pops": 896,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->STORE": {
+     "pushes": 128,
+     "pops": 128,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "STORE->LOAD": {
+     "pushes": 33,
+     "pops": 33,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->LOAD": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "LOAD->STORE": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "MMA->VEC": {
+     "pushes": 256,
+     "pops": 256,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "STORE->MMA": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "STORE->VEC": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->MMA": {
+     "pushes": 258,
+     "pops": 258,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    }
+   },
+   "channels": {
+    "read0": 50888,
+    "read1": 50884,
+    "read2": 50944,
+    "read3": 50944,
+    "read4": 50692,
+    "read5": 50692,
+    "read6": 50880,
+    "read7": 50876,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "banks": {
+    "ACC/bank5": 10224,
+    "VEC/bank1": 8160,
+    "ACC/bank4": 8160
+   },
+   "fe_loop_wait": 253978,
+   "wall_s": 1.6997551918029785,
+   "mean_load2d": 432.02564102564105,
+   "mean_loadidx": 1101.2109375,
+   "n_instrs": 525,
+   "inflight_mean": 36645.777446814725,
+   "inflight_p90": 185600,
+   "channel_util": 0.1856191686013404,
+   "stall_arbiter": 13331,
+   "stall_arbiter_gather": 3184960,
+   "gather_bound": {
+    "window": 0,
+    "channel": 71040,
+    "requests": 147456
+   },
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "LOAD->STORE": 1,
+    "LOAD->VEC": 1,
+    "MMA->LOAD": 3,
+    "MMA->VEC": 4,
+    "STORE->LOAD": 1,
+    "STORE->MMA": 2,
+    "STORE->VEC": 2,
+    "VEC->LOAD": 2,
+    "VEC->MMA": 6,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 3,
+   "push_blocked": 0,
+   "form": "flat [W1|W3] stream",
+   "ring": 3,
+   "fifo": 32
+  },
+  {
+   "family": "MoE",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0030918627255613596,
+   "cycles": 227728,
+   "us": 227.728,
+   "per_unit": 7116.5,
+   "units": 32,
+   "unit_name": "token tile",
+   "eta_mfu": 0.21583643645050235,
+   "eta_bw": 0.2772518091758589,
+   "macs": 805306368,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "per_queue": {
+    "LOAD": {
+     "n": 1025,
+     "busy": 406800,
+     "stall_token": 223823,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 768,
+     "busy": 196608,
+     "stall_token": 176913,
+     "stall_bank": 24480,
+     "stall_fifo": 0,
+     "wait_unit": 24192
+    },
+    "VEC": {
+     "n": 449,
+     "busy": 106594,
+     "stall_token": 112281,
+     "stall_bank": 8160,
+     "stall_fifo": 0,
+     "wait_unit": 106017
+    },
+    "STORE": {
+     "n": 128,
+     "busy": 98304,
+     "stall_token": 226574,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "LOAD->VEC": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "MMA->LOAD": {
+     "pushes": 774,
+     "pops": 774,
+     "max_level": 6,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "LOAD->MMA": {
+     "pushes": 896,
+     "pops": 896,
+     "max_level": 6,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->STORE": {
+     "pushes": 128,
+     "pops": 128,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "STORE->LOAD": {
+     "pushes": 33,
+     "pops": 33,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->LOAD": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "LOAD->STORE": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "MMA->VEC": {
+     "pushes": 256,
+     "pops": 256,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "STORE->MMA": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "STORE->VEC": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->MMA": {
+     "pushes": 258,
+     "pops": 258,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    }
+   },
+   "channels": {
+    "read0": 50824,
+    "read1": 50820,
+    "read2": 50944,
+    "read3": 50944,
+    "read4": 50820,
+    "read5": 50820,
+    "read6": 50816,
+    "read7": 50812,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "banks": {
+    "ACC/bank5": 16320,
+    "VEC/bank1": 8160,
+    "ACC/bank4": 8160
+   },
+   "fe_loop_wait": 210575,
+   "wall_s": 1.7269902229309082,
+   "mean_load2d": 446.8294314381271,
+   "mean_loadidx": 1101.2109375,
+   "n_instrs": 531,
+   "inflight_mean": 44277.599381718544,
+   "inflight_p90": 188416,
+   "channel_util": 0.22329270006323332,
+   "stall_arbiter": 26610,
+   "stall_arbiter_gather": 3184960,
+   "gather_bound": {
+    "window": 0,
+    "channel": 71040,
+    "requests": 147456
+   },
+   "static_levels": {
+    "LOAD->MMA": 6,
+    "LOAD->STORE": 1,
+    "LOAD->VEC": 1,
+    "MMA->LOAD": 6,
+    "MMA->VEC": 4,
+    "STORE->LOAD": 1,
+    "STORE->MMA": 2,
+    "STORE->VEC": 2,
+    "VEC->LOAD": 2,
+    "VEC->MMA": 6,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 6,
+   "push_blocked": 0,
+   "form": "flat [W1|W3] stream",
+   "ring": 6,
+   "fifo": 32
+  },
+  {
+   "family": "MoE",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0030918627255613596,
+   "cycles": 207386,
+   "us": 207.386,
+   "per_unit": 6480.8125,
+   "units": 32,
+   "unit_name": "token tile",
+   "eta_mfu": 0.23700731968406738,
+   "eta_bw": 0.30444678039983414,
+   "macs": 805306368,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "per_queue": {
+    "LOAD": {
+     "n": 1025,
+     "busy": 406800,
+     "stall_token": 200402,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 768,
+     "busy": 196608,
+     "stall_token": 148501,
+     "stall_bank": 24480,
+     "stall_fifo": 0,
+     "wait_unit": 32256
+    },
+    "VEC": {
+     "n": 449,
+     "busy": 106594,
+     "stall_token": 91939,
+     "stall_bank": 8160,
+     "stall_fifo": 0,
+     "wait_unit": 106017
+    },
+    "STORE": {
+     "n": 128,
+     "busy": 98304,
+     "stall_token": 206231,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "LOAD->VEC": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "MMA->LOAD": {
+     "pushes": 776,
+     "pops": 776,
+     "max_level": 8,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "LOAD->MMA": {
+     "pushes": 896,
+     "pops": 896,
+     "max_level": 9,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->STORE": {
+     "pushes": 128,
+     "pops": 128,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "STORE->LOAD": {
+     "pushes": 33,
+     "pops": 33,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->LOAD": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "LOAD->STORE": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "MMA->VEC": {
+     "pushes": 256,
+     "pops": 256,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "STORE->MMA": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "STORE->VEC": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->MMA": {
+     "pushes": 258,
+     "pops": 258,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    }
+   },
+   "channels": {
+    "read0": 50824,
+    "read1": 50824,
+    "read2": 50828,
+    "read3": 50832,
+    "read4": 50932,
+    "read5": 50928,
+    "read6": 50816,
+    "read7": 50816,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "banks": {
+    "ACC/bank5": 16320,
+    "VEC/bank1": 8160,
+    "ACC/bank4": 8160
+   },
+   "fe_loop_wait": 191513,
+   "wall_s": 1.7215137481689453,
+   "mean_load2d": 538.9041248606466,
+   "mean_loadidx": 1069,
+   "n_instrs": 535,
+   "inflight_mean": 50909.5117317466,
+   "inflight_p90": 214528,
+   "channel_util": 0.2451949504788173,
+   "stall_arbiter": 109201,
+   "stall_arbiter_gather": 0,
+   "gather_bound": {
+    "window": 0,
+    "channel": 0,
+    "requests": 147456
+   },
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "LOAD->STORE": 1,
+    "LOAD->VEC": 1,
+    "MMA->LOAD": 12,
+    "MMA->VEC": 4,
+    "STORE->LOAD": 1,
+    "STORE->MMA": 2,
+    "STORE->VEC": 2,
+    "VEC->LOAD": 2,
+    "VEC->MMA": 6,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 8,
+   "push_blocked": 0,
+   "form": "flat [W1|W3] stream",
+   "ring": 12,
+   "fifo": 32
+  },
+  {
+   "family": "MoE",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0030918627255613596,
+   "cycles": 215862,
+   "us": 215.862,
+   "per_unit": 6745.6875,
+   "units": 32,
+   "unit_name": "token tile",
+   "eta_mfu": 0.22770103121438698,
+   "eta_bw": 0.2924924257164299,
+   "macs": 805306368,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "per_queue": {
+    "LOAD": {
+     "n": 1025,
+     "busy": 406800,
+     "stall_token": 208338,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 768,
+     "busy": 196608,
+     "stall_token": 156973,
+     "stall_bank": 24480,
+     "stall_fifo": 0,
+     "wait_unit": 32256
+    },
+    "VEC": {
+     "n": 449,
+     "busy": 106594,
+     "stall_token": 100415,
+     "stall_bank": 8160,
+     "stall_fifo": 0,
+     "wait_unit": 106017
+    },
+    "STORE": {
+     "n": 128,
+     "busy": 98304,
+     "stall_token": 214707,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "LOAD->VEC": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "MMA->LOAD": {
+     "pushes": 784,
+     "pops": 784,
+     "max_level": 16,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "LOAD->MMA": {
+     "pushes": 896,
+     "pops": 896,
+     "max_level": 9,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->STORE": {
+     "pushes": 128,
+     "pops": 128,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "STORE->LOAD": {
+     "pushes": 33,
+     "pops": 33,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->LOAD": {
+     "pushes": 65,
+     "pops": 65,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "LOAD->STORE": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "MMA->VEC": {
+     "pushes": 256,
+     "pops": 256,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "STORE->MMA": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "STORE->VEC": {
+     "pushes": 130,
+     "pops": 130,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->MMA": {
+     "pushes": 258,
+     "pops": 258,
+     "max_level": 2,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    }
+   },
+   "channels": {
+    "read0": 50904,
+    "read1": 50896,
+    "read2": 50908,
+    "read3": 50832,
+    "read4": 50816,
+    "read5": 50816,
+    "read6": 50816,
+    "read7": 50812,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "banks": {
+    "ACC/bank5": 16320,
+    "VEC/bank1": 8160,
+    "ACC/bank4": 8160
+   },
+   "fe_loop_wait": 199451,
+   "wall_s": 1.777209758758545,
+   "mean_load2d": 545.9219620958752,
+   "mean_loadidx": 1069,
+   "n_instrs": 551,
+   "inflight_mean": 49254.387191817,
+   "inflight_p90": 210944,
+   "channel_util": 0.2355671679128332,
+   "stall_arbiter": 115496,
+   "stall_arbiter_gather": 0,
+   "gather_bound": {
+    "window": 0,
+    "channel": 0,
+    "requests": 147456
+   },
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "LOAD->STORE": 1,
+    "LOAD->VEC": 1,
+    "MMA->LOAD": 16,
+    "MMA->VEC": 4,
+    "STORE->LOAD": 1,
+    "STORE->MMA": 2,
+    "STORE->VEC": 2,
+    "VEC->LOAD": 2,
+    "VEC->MMA": 6,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 16,
+   "push_blocked": 0,
+   "form": "flat [W1|W3] stream",
+   "ring": 16,
+   "fifo": 32
+  },
+  {
+   "family": "MLA",
+   "timing": "config-C-phase5",
+   "ok": true,
+   "err": 0.0021503947827029367,
+   "cycles": 58646,
+   "us": 58.646,
+   "per_unit": 3665.375,
+   "units": 16,
+   "unit_name": "KV tile",
+   "eta_mfu": 0.07420795962213962,
+   "eta_bw": 0.09221430276574702,
+   "macs": 71303168,
+   "dram_read": 1253376,
+   "dram_write": 131072,
+   "per_queue": {
+    "LOAD": {
+     "n": 85,
+     "busy": 39168,
+     "stall_token": 50932,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 144,
+     "busy": 17408,
+     "stall_token": 43281,
+     "stall_bank": 10160,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "VEC": {
+     "n": 280,
+     "busy": 20794,
+     "stall_token": 33456,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 20003
+    },
+    "STORE": {
+     "n": 1,
+     "busy": 4096,
+     "stall_token": 53707,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "MMA->LOAD": {
+     "pushes": 152,
+     "pops": 152,
+     "max_level": 8,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "LOAD->MMA": {
+     "pushes": 85,
+     "pops": 85,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "VEC->STORE": {
+     "pushes": 1,
+     "pops": 1,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "MMA->VEC": {
+     "pushes": 84,
+     "pops": 84,
+     "max_level": 4,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    },
+    "VEC->MMA": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 16
+    }
+   },
+   "channels": {
+    "read0": 4864,
+    "read1": 5120,
+    "read2": 5120,
+    "read3": 5120,
+    "read4": 4864,
+    "read5": 4864,
+    "read6": 4608,
+    "read7": 4608,
+    "write0": 4096,
+    "write1": 0
+   },
+   "banks": {
+    "ACC/bank0": 10160
+   },
+   "fe_loop_wait": 0,
+   "wall_s": 0.050852060317993164,
+   "mean_load2d": 763.6588235294117,
+   "mean_loadidx": 0,
+   "n_instrs": 126,
+   "inflight_mean": 16813.952187702485,
+   "inflight_p90": 57344,
+   "channel_util": 0.08348395457490707,
+   "stall_arbiter": 243,
+   "stall_arbiter_gather": 0,
+   "gather_bound": {
+    "window": 0,
+    "channel": 0,
+    "requests": 0
+   },
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "MMA->LOAD": 8,
+    "MMA->VEC": 5,
+    "VEC->MMA": 2,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 8,
+   "push_blocked": 0,
+   "form": "INP 5, phase-5 descriptor",
+   "ring": 4,
+   "fifo": 16
+  },
+  {
+   "family": "MLA",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0021503947827029367,
+   "cycles": 44355,
+   "us": 44.355,
+   "per_unit": 2772.1875,
+   "units": 16,
+   "unit_name": "KV tile",
+   "eta_mfu": 0.09811746139104949,
+   "eta_bw": 0.12192537481681885,
+   "macs": 71303168,
+   "dram_read": 1253376,
+   "dram_write": 131072,
+   "per_queue": {
+    "LOAD": {
+     "n": 85,
+     "busy": 39168,
+     "stall_token": 39326,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 144,
+     "busy": 17408,
+     "stall_token": 35274,
+     "stall_bank": 4064,
+     "stall_fifo": 0,
+     "wait_unit": 1860
+    },
+    "VEC": {
+     "n": 280,
+     "busy": 20794,
+     "stall_token": 21213,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 20003
+    },
+    "STORE": {
+     "n": 1,
+     "busy": 4096,
+     "stall_token": 41464,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "MMA->LOAD": {
+     "pushes": 152,
+     "pops": 152,
+     "max_level": 8,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "LOAD->MMA": {
+     "pushes": 85,
+     "pops": 85,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->STORE": {
+     "pushes": 1,
+     "pops": 1,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "MMA->VEC": {
+     "pushes": 84,
+     "pops": 84,
+     "max_level": 4,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->MMA": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    }
+   },
+   "channels": {
+    "read0": 4992,
+    "read1": 4992,
+    "read2": 4864,
+    "read3": 4864,
+    "read4": 4864,
+    "read5": 4864,
+    "read6": 4864,
+    "read7": 4864,
+    "write0": 2048,
+    "write1": 2048
+   },
+   "banks": {
+    "ACC/bank0": 4064
+   },
+   "fe_loop_wait": 0,
+   "wall_s": 0.05031991004943848,
+   "mean_load2d": 545.0117647058823,
+   "mean_loadidx": 0,
+   "n_instrs": 126,
+   "inflight_mean": 15722.064975763724,
+   "inflight_p90": 57344,
+   "channel_util": 0.11038214406493067,
+   "stall_arbiter": 1242,
+   "stall_arbiter_gather": 0,
+   "gather_bound": {
+    "window": 0,
+    "channel": 0,
+    "requests": 0
+   },
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "MMA->LOAD": 8,
+    "MMA->VEC": 5,
+    "VEC->MMA": 2,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 8,
+   "push_blocked": 0,
+   "form": "INP 5, K ring over 1 KV tile(s)",
+   "ring": 4,
+   "fifo": 8
+  },
+  {
+   "family": "MLA",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0021503947827029367,
+   "cycles": 34831,
+   "us": 34.831,
+   "per_unit": 2176.9375,
+   "units": 16,
+   "unit_name": "KV tile",
+   "eta_mfu": 0.1249461686428756,
+   "eta_bw": 0.15526398897533805,
+   "macs": 71303168,
+   "dram_read": 1253376,
+   "dram_write": 131072,
+   "per_queue": {
+    "LOAD": {
+     "n": 85,
+     "busy": 39168,
+     "stall_token": 27925,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 144,
+     "busy": 17408,
+     "stall_token": 22743,
+     "stall_bank": 7041,
+     "stall_fifo": 79,
+     "wait_unit": 1860
+    },
+    "VEC": {
+     "n": 280,
+     "busy": 20794,
+     "stall_token": 11689,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 20003
+    },
+    "STORE": {
+     "n": 1,
+     "busy": 4096,
+     "stall_token": 31956,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "MMA->LOAD": {
+     "pushes": 162,
+     "pops": 162,
+     "max_level": 8,
+     "push_blocked_cycles": 79,
+     "depth": 8
+    },
+    "LOAD->MMA": {
+     "pushes": 85,
+     "pops": 85,
+     "max_level": 6,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->STORE": {
+     "pushes": 1,
+     "pops": 1,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "MMA->VEC": {
+     "pushes": 84,
+     "pops": 84,
+     "max_level": 4,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    },
+    "VEC->MMA": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 8
+    }
+   },
+   "channels": {
+    "read0": 4992,
+    "read1": 4992,
+    "read2": 4864,
+    "read3": 4864,
+    "read4": 4864,
+    "read5": 4864,
+    "read6": 4864,
+    "read7": 4864,
+    "write0": 2048,
+    "write1": 2048
+   },
+   "banks": {
+    "ACC/bank0": 7041
+   },
+   "fe_loop_wait": 0,
+   "wall_s": 0.054511308670043945,
+   "mean_load2d": 611.1058823529412,
+   "mean_loadidx": 0,
+   "n_instrs": 219,
+   "inflight_mean": 21962.30254658207,
+   "inflight_p90": 73728,
+   "channel_util": 0.14056443972323504,
+   "stall_arbiter": 6860,
+   "stall_arbiter_gather": 0,
+   "gather_bound": {
+    "window": 0,
+    "channel": 0,
+    "requests": 0
+   },
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "MMA->LOAD": 18,
+    "MMA->VEC": 5,
+    "VEC->MMA": 2,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 8,
+   "push_blocked": 79,
+   "form": "INP 5, K ring over 2 KV tile(s)",
+   "ring": 10,
+   "fifo": 8
+  },
+  {
+   "family": "MLA",
+   "timing": "config-C",
+   "fault": "TOKEN_TIMEOUT queue=- pc=-1 {'aux': {'blocked': {'LOAD': 'PUSH(to=Q.MMA)', 'MMA': 'PUSH(to=Q.LOAD)', 'VEC': 'POP(from=Q.MMA)'}, 'fe_waiting': None}}",
+   "cycles": null,
+   "n_instrs": 401,
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "MMA->LOAD": 36,
+    "MMA->VEC": 5,
+    "VEC->MMA": 2,
+    "VEC->STORE": 1
+   },
+   "form": "INP 5, K ring over 4 KV tile(s)",
+   "ring": 20,
+   "fifo": 8
+  },
+  {
+   "family": "MLA",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0021503947827029367,
+   "cycles": 44355,
+   "us": 44.355,
+   "per_unit": 2772.1875,
+   "units": 16,
+   "unit_name": "KV tile",
+   "eta_mfu": 0.09811746139104949,
+   "eta_bw": 0.12192537481681885,
+   "macs": 71303168,
+   "dram_read": 1253376,
+   "dram_write": 131072,
+   "per_queue": {
+    "LOAD": {
+     "n": 85,
+     "busy": 39168,
+     "stall_token": 39326,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 144,
+     "busy": 17408,
+     "stall_token": 35274,
+     "stall_bank": 4064,
+     "stall_fifo": 0,
+     "wait_unit": 1860
+    },
+    "VEC": {
+     "n": 280,
+     "busy": 20794,
+     "stall_token": 21213,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 20003
+    },
+    "STORE": {
+     "n": 1,
+     "busy": 4096,
+     "stall_token": 41464,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "MMA->LOAD": {
+     "pushes": 152,
+     "pops": 152,
+     "max_level": 8,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "LOAD->MMA": {
+     "pushes": 85,
+     "pops": 85,
+     "max_level": 1,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->STORE": {
+     "pushes": 1,
+     "pops": 1,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "MMA->VEC": {
+     "pushes": 84,
+     "pops": 84,
+     "max_level": 4,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->MMA": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    }
+   },
+   "channels": {
+    "read0": 4992,
+    "read1": 4992,
+    "read2": 4864,
+    "read3": 4864,
+    "read4": 4864,
+    "read5": 4864,
+    "read6": 4864,
+    "read7": 4864,
+    "write0": 2048,
+    "write1": 2048
+   },
+   "banks": {
+    "ACC/bank0": 4064
+   },
+   "fe_loop_wait": 0,
+   "wall_s": 0.05466151237487793,
+   "mean_load2d": 545.0117647058823,
+   "mean_loadidx": 0,
+   "n_instrs": 126,
+   "inflight_mean": 15722.064975763724,
+   "inflight_p90": 57344,
+   "channel_util": 0.11038214406493067,
+   "stall_arbiter": 1242,
+   "stall_arbiter_gather": 0,
+   "gather_bound": {
+    "window": 0,
+    "channel": 0,
+    "requests": 0
+   },
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "MMA->LOAD": 8,
+    "MMA->VEC": 5,
+    "VEC->MMA": 2,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 8,
+   "push_blocked": 0,
+   "form": "INP 5, K ring over 1 KV tile(s)",
+   "ring": 4,
+   "fifo": 32
+  },
+  {
+   "family": "MLA",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0021503947827029367,
+   "cycles": 34831,
+   "us": 34.831,
+   "per_unit": 2176.9375,
+   "units": 16,
+   "unit_name": "KV tile",
+   "eta_mfu": 0.1249461686428756,
+   "eta_bw": 0.15526398897533805,
+   "macs": 71303168,
+   "dram_read": 1253376,
+   "dram_write": 131072,
+   "per_queue": {
+    "LOAD": {
+     "n": 85,
+     "busy": 39168,
+     "stall_token": 27925,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 144,
+     "busy": 17408,
+     "stall_token": 22773,
+     "stall_bank": 7041,
+     "stall_fifo": 0,
+     "wait_unit": 1860
+    },
+    "VEC": {
+     "n": 280,
+     "busy": 20794,
+     "stall_token": 11689,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 20003
+    },
+    "STORE": {
+     "n": 1,
+     "busy": 4096,
+     "stall_token": 31956,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "MMA->LOAD": {
+     "pushes": 162,
+     "pops": 162,
+     "max_level": 18,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "LOAD->MMA": {
+     "pushes": 85,
+     "pops": 85,
+     "max_level": 6,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->STORE": {
+     "pushes": 1,
+     "pops": 1,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "MMA->VEC": {
+     "pushes": 84,
+     "pops": 84,
+     "max_level": 4,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->MMA": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    }
+   },
+   "channels": {
+    "read0": 4992,
+    "read1": 4992,
+    "read2": 4864,
+    "read3": 4864,
+    "read4": 4864,
+    "read5": 4864,
+    "read6": 4864,
+    "read7": 4864,
+    "write0": 2048,
+    "write1": 2048
+   },
+   "banks": {
+    "ACC/bank0": 7041
+   },
+   "fe_loop_wait": 0,
+   "wall_s": 0.054047584533691406,
+   "mean_load2d": 611.1058823529412,
+   "mean_loadidx": 0,
+   "n_instrs": 219,
+   "inflight_mean": 21962.30254658207,
+   "inflight_p90": 73728,
+   "channel_util": 0.14056443972323504,
+   "stall_arbiter": 6860,
+   "stall_arbiter_gather": 0,
+   "gather_bound": {
+    "window": 0,
+    "channel": 0,
+    "requests": 0
+   },
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "MMA->LOAD": 18,
+    "MMA->VEC": 5,
+    "VEC->MMA": 2,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 18,
+   "push_blocked": 0,
+   "form": "INP 5, K ring over 2 KV tile(s)",
+   "ring": 10,
+   "fifo": 32
+  },
+  {
+   "family": "MLA",
+   "timing": "config-C",
+   "ok": true,
+   "err": 0.0021503947827029367,
+   "cycles": 34831,
+   "us": 34.831,
+   "per_unit": 2176.9375,
+   "units": 16,
+   "unit_name": "KV tile",
+   "eta_mfu": 0.1249461686428756,
+   "eta_bw": 0.15526398897533805,
+   "macs": 71303168,
+   "dram_read": 1253376,
+   "dram_write": 131072,
+   "per_queue": {
+    "LOAD": {
+     "n": 85,
+     "busy": 39168,
+     "stall_token": 23973,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    },
+    "MMA": {
+     "n": 144,
+     "busy": 17408,
+     "stall_token": 22772,
+     "stall_bank": 7041,
+     "stall_fifo": 14,
+     "wait_unit": 1860
+    },
+    "VEC": {
+     "n": 280,
+     "busy": 20794,
+     "stall_token": 11689,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 20003
+    },
+    "STORE": {
+     "n": 1,
+     "busy": 4096,
+     "stall_token": 31964,
+     "stall_bank": 0,
+     "stall_fifo": 0,
+     "wait_unit": 0
+    }
+   },
+   "edges": {
+    "MMA->LOAD": {
+     "pushes": 180,
+     "pops": 180,
+     "max_level": 32,
+     "push_blocked_cycles": 14,
+     "depth": 32
+    },
+    "LOAD->MMA": {
+     "pushes": 85,
+     "pops": 85,
+     "max_level": 16,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->STORE": {
+     "pushes": 1,
+     "pops": 1,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "MMA->VEC": {
+     "pushes": 84,
+     "pops": 84,
+     "max_level": 4,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    },
+    "VEC->MMA": {
+     "pushes": 32,
+     "pops": 32,
+     "max_level": 0,
+     "push_blocked_cycles": 0,
+     "depth": 32
+    }
+   },
+   "channels": {
+    "read0": 4992,
+    "read1": 4992,
+    "read2": 4864,
+    "read3": 4864,
+    "read4": 4864,
+    "read5": 4864,
+    "read6": 4864,
+    "read7": 4864,
+    "write0": 2048,
+    "write1": 2048
+   },
+   "banks": {
+    "ACC/bank0": 7041
+   },
+   "fe_loop_wait": 0,
+   "wall_s": 0.06543803215026855,
+   "mean_load2d": 724.3294117647059,
+   "mean_loadidx": 0,
+   "n_instrs": 401,
+   "inflight_mean": 26017.026212282162,
+   "inflight_p90": 73728,
+   "channel_util": 0.14056443972323504,
+   "stall_arbiter": 16484,
+   "stall_arbiter_gather": 0,
+   "gather_bound": {
+    "window": 0,
+    "channel": 0,
+    "requests": 0
+   },
+   "static_levels": {
+    "LOAD->MMA": 5,
+    "MMA->LOAD": 36,
+    "MMA->VEC": 5,
+    "VEC->MMA": 2,
+    "VEC->STORE": 1
+   },
+   "mma_load_level": 32,
+   "push_blocked": 14,
+   "form": "INP 5, K ring over 4 KV tile(s)",
+   "ring": 20,
+   "fifo": 32
+  }
+ ],
+ "mlp_sanity": [
+  {
+   "label": "GEMM (2 LOAD, 1 MMA, 1 STORE; 8 write channels)",
+   "cores": 1,
+   "cycles": 1413,
+   "ratio": 1.0,
+   "channel_util": 0.08085633404104742,
+   "core_cycles": [
+    1413
+   ],
+   "arbiter": [
+    0
+   ]
+  },
+  {
+   "label": "GEMM (2 LOAD, 1 MMA, 1 STORE; 8 write channels)",
+   "cores": 2,
+   "cycles": 1413,
+   "ratio": 1.0,
+   "channel_util": 0.16171266808209483,
+   "core_cycles": [
+    1413,
+    1413
+   ],
+   "arbiter": [
+    0,
+    0
+   ]
+  },
+  {
+   "label": "GEMM (2 LOAD, 1 MMA, 1 STORE; 8 write channels)",
+   "cores": 4,
+   "cycles": 1569,
+   "ratio": 1.1104033970276008,
+   "channel_util": 0.2912683237731039,
+   "core_cycles": [
+    1569,
+    1569,
+    1569,
+    1569
+   ],
+   "arbiter": [
+    156,
+    156,
+    156,
+    156
+   ]
+  },
+  {
+   "label": "weight stream (16 x 32 KB LOAD.2D, no tokens)",
+   "cores": 1,
+   "cycles": 2351,
+   "ratio": 1.0,
+   "channel_util": 0.8711186729051468,
+   "core_cycles": [
+    2351
+   ],
+   "arbiter": [
+    12192
+   ]
+  },
+  {
+   "label": "weight stream (16 x 32 KB LOAD.2D, no tokens)",
+   "cores": 2,
+   "cycles": 4397,
+   "ratio": 1.8702679710761378,
+   "channel_util": 0.931544234705481,
+   "core_cycles": [
+    4397,
+    4397
+   ],
+   "arbiter": [
+    28560,
+    28560
+   ]
+  },
+  {
+   "label": "weight stream (16 x 32 KB LOAD.2D, no tokens)",
+   "cores": 4,
+   "cycles": 8492,
+   "ratio": 3.612079965971927,
+   "channel_util": 0.9646726330664155,
+   "core_cycles": [
+    8492,
+    8492,
+    8492,
+    8492
+   ],
+   "arbiter": [
+    61320,
+    61320,
+    61320,
+    61320
+   ]
+  }
+ ],
+ "mlp_cores": [
+  {
+   "label": "MoE ring 12, 1 core(s) x 32 experts, striping 2",
+   "cores": 1,
+   "ok": true,
+   "errs": [
+    0.0030918627255613596
+   ],
+   "cycles": 298058,
+   "us": 298.058,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 9314.3125,
+   "eta_bw": 0.21183125431962907,
+   "eta_mfu": 0.6596300048983755,
+   "eta_mfu_chip": 0.16490750122459388,
+   "channel_util": 0.1706043790134806,
+   "inflight_mean": 34618.595414315336,
+   "inflight_p90": 189440,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    298058
+   ],
+   "core_arbiter": [
+    72430
+   ],
+   "core_arbiter_gather": [
+    0
+   ],
+   "core_gather_wait_per_burst": [
+    0.0
+   ],
+   "core_gather_bound": [
+    {
+     "window": 0,
+     "channel": 0,
+     "requests": 147456
+    }
+   ],
+   "core_loads": [
+    1025
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 50944,
+    "read1": 50944,
+    "read2": 50828,
+    "read3": 50828,
+    "read4": 50820,
+    "read5": 50924,
+    "read6": 50696,
+    "read7": 50816,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "wall_s": 1.8061258792877197,
+   "family": "MoE",
+   "arrays_per_core": 1,
+   "ring": 12
+  },
+  {
+   "label": "MoE ring 12, 2 core(s) x 16 experts, striping 2",
+   "cores": 2,
+   "ok": true,
+   "errs": [
+    0.0030495812144114755,
+    0.0030918627255613596
+   ],
+   "cycles": 153995,
+   "us": 153.995,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 4812.34375,
+   "eta_bw": 0.4100133121205234,
+   "eta_mfu": 0.6383583882593591,
+   "eta_mfu_chip": 0.31917919412967954,
+   "channel_util": 0.3302185135881035,
+   "inflight_mean": 86625.38955160882,
+   "inflight_p90": 242176,
+   "dram_read": 13018112,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    153995,
+    151208
+   ],
+   "core_arbiter": [
+    97197,
+    45136
+   ],
+   "core_arbiter_gather": [
+    21314672,
+    8686880
+   ],
+   "core_gather_wait_per_burst": [
+    286.8576658053402,
+    118.75109361329834
+   ],
+   "core_gather_bound": [
+    {
+     "window": 12256,
+     "channel": 39264,
+     "requests": 74304
+    },
+    {
+     "window": 7520,
+     "channel": 26672,
+     "requests": 73152
+    }
+   ],
+   "core_loads": [
+    513,
+    513
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 50072,
+    "read1": 51292,
+    "read2": 53144,
+    "read3": 52752,
+    "read4": 46256,
+    "read5": 53324,
+    "read6": 52396,
+    "read7": 47580,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "wall_s": 1.8721330165863037,
+   "family": "MoE",
+   "arrays_per_core": 1,
+   "ring": 12
+  },
+  {
+   "label": "MoE ring 12, 4 core(s) x 8 experts, striping 2",
+   "cores": 4,
+   "ok": true,
+   "errs": [
+    0.0029848694436391317,
+    0.0030495812144114755,
+    0.0028115865014085536,
+    0.0030918627255613596
+   ],
+   "cycles": 98002,
+   "us": 98.002,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 3062.5625,
+   "eta_bw": 0.6443133813595641,
+   "eta_mfu": 0.5015407848819412,
+   "eta_mfu_chip": 0.5015407848819412,
+   "channel_util": 0.5189281851390788,
+   "inflight_mean": 244304.63051774455,
+   "inflight_p90": 691712,
+   "dram_read": 13019136,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    98002,
+    97330,
+    96970,
+    96658
+   ],
+   "core_arbiter": [
+    170604,
+    217690,
+    209290,
+    219207
+   ],
+   "core_arbiter_gather": [
+    35746864,
+    30909960,
+    33013064,
+    30302160
+   ],
+   "core_gather_wait_per_burst": [
+    942.6915611814346,
+    849.5481530343008,
+    900.2253490401396,
+    830.6513157894736
+   ],
+   "core_gather_bound": [
+    {
+     "window": 6672,
+     "channel": 32496,
+     "requests": 37920
+    },
+    {
+     "window": 5904,
+     "channel": 29416,
+     "requests": 36384
+    },
+    {
+     "window": 5936,
+     "channel": 30552,
+     "requests": 36672
+    },
+    {
+     "window": 5952,
+     "channel": 29632,
+     "requests": 36480
+    }
+   ],
+   "core_loads": [
+    257,
+    257,
+    257,
+    257
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 50452,
+    "read1": 50452,
+    "read2": 52404,
+    "read3": 52404,
+    "read4": 50492,
+    "read5": 50492,
+    "read6": 50076,
+    "read7": 50076,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "wall_s": 1.9309813976287842,
+   "family": "MoE",
+   "arrays_per_core": 1,
+   "ring": 12
+  },
+  {
+   "label": "MoE ring 12, 1 core x 4 arrays",
+   "cores": 1,
+   "ok": true,
+   "errs": [
+    0.0030918627255613596
+   ],
+   "cycles": 207386,
+   "us": 207.386,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 6480.8125,
+   "eta_bw": 0.30444678039983414,
+   "eta_mfu": 0.23700731968406738,
+   "eta_mfu_chip": 0.23700731968406738,
+   "channel_util": 0.2451949504788173,
+   "inflight_mean": 50909.5117317466,
+   "inflight_p90": 214528,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    207386
+   ],
+   "core_arbiter": [
+    109201
+   ],
+   "core_arbiter_gather": [
+    0
+   ],
+   "core_gather_wait_per_burst": [
+    0.0
+   ],
+   "core_gather_bound": [
+    {
+     "window": 0,
+     "channel": 0,
+     "requests": 147456
+    }
+   ],
+   "core_loads": [
+    1025
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 50824,
+    "read1": 50824,
+    "read2": 50828,
+    "read3": 50832,
+    "read4": 50932,
+    "read5": 50928,
+    "read6": 50816,
+    "read7": 50816,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "wall_s": 1.8597674369812012,
+   "family": "MoE",
+   "arrays_per_core": 4,
+   "ring": 12
+  },
+  {
+   "label": "MLA K ring 10, 1 core(s) x 1 head group",
+   "cores": 1,
+   "ok": true,
+   "errs": [
+    0.0021503947827029367
+   ],
+   "cycles": 40972,
+   "us": 40.972,
+   "units": 16,
+   "unit_name": "KV tile",
+   "per_unit": 2560.75,
+   "eta_bw": 0.1319925802987406,
+   "eta_mfu": 0.4248755247486088,
+   "eta_mfu_chip": 0.1062188811871522,
+   "channel_util": 0.11949624133554623,
+   "inflight_mean": 18171.476325295323,
+   "inflight_p90": 57344,
+   "dram_read": 1253376,
+   "dram_write": 131072,
+   "macs": 71303168,
+   "core_cycles": [
+    40972
+   ],
+   "core_arbiter": [
+    4364
+   ],
+   "core_arbiter_gather": [
+    0
+   ],
+   "core_gather_wait_per_burst": [
+    0.0
+   ],
+   "core_gather_bound": [
+    {
+     "window": 0,
+     "channel": 0,
+     "requests": 0
+    }
+   ],
+   "core_loads": [
+    85
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 5120,
+    "read1": 5120,
+    "read2": 4992,
+    "read3": 4992,
+    "read4": 4992,
+    "read5": 4992,
+    "read6": 4480,
+    "read7": 4480,
+    "write0": 2048,
+    "write1": 2048
+   },
+   "wall_s": 0.05224323272705078,
+   "family": "MLA",
+   "arrays_per_core": 1,
+   "ring": 10
+  },
+  {
+   "label": "MLA K ring 10, 2 core(s) x 1 head group",
+   "cores": 2,
+   "ok": true,
+   "errs": [
+    0.0021503947827029367,
+    0.0021503947827029367
+   ],
+   "cycles": 43402,
+   "us": 43.402,
+   "units": 32,
+   "unit_name": "KV tile",
+   "per_unit": 1356.3125,
+   "eta_bw": 0.24920510575549515,
+   "eta_mfu": 0.4010875074881342,
+   "eta_mfu_chip": 0.2005437537440671,
+   "channel_util": 0.2256117229620755,
+   "inflight_mean": 39250.32910925764,
+   "inflight_p90": 114688,
+   "dram_read": 2506752,
+   "dram_write": 262144,
+   "macs": 142606336,
+   "core_cycles": [
+    41354,
+    43402
+   ],
+   "core_arbiter": [
+    12092,
+    14140
+   ],
+   "core_arbiter_gather": [
+    0,
+    0
+   ],
+   "core_gather_wait_per_burst": [
+    0.0,
+    0.0
+   ],
+   "core_gather_bound": [
+    {
+     "window": 0,
+     "channel": 0,
+     "requests": 0
+    },
+    {
+     "window": 0,
+     "channel": 0,
+     "requests": 0
+    }
+   ],
+   "core_loads": [
+    85,
+    85
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 10624,
+    "read1": 10624,
+    "read2": 10624,
+    "read3": 10624,
+    "read4": 8960,
+    "read5": 8960,
+    "read6": 8960,
+    "read7": 8960,
+    "write0": 4096,
+    "write1": 4096
+   },
+   "wall_s": 0.11668157577514648,
+   "family": "MLA",
+   "arrays_per_core": 1,
+   "ring": 10
+  },
+  {
+   "label": "MLA K ring 10, 4 core(s) x 1 head group",
+   "cores": 4,
+   "ok": true,
+   "errs": [
+    0.0021503947827029367,
+    0.0021503947827029367,
+    0.0021503947827029367,
+    0.0021503947827029367
+   ],
+   "cycles": 48522,
+   "us": 48.522,
+   "units": 64,
+   "unit_name": "KV tile",
+   "per_unit": 758.15625,
+   "eta_bw": 0.4458183916573925,
+   "eta_mfu": 0.35876509624500225,
+   "eta_mfu_chip": 0.35876509624500225,
+   "channel_util": 0.4036107332756276,
+   "inflight_mean": 105735.92448786118,
+   "inflight_p90": 262144,
+   "dram_read": 5013504,
+   "dram_write": 524288,
+   "macs": 285212672,
+   "core_cycles": [
+    42378,
+    44426,
+    46474,
+    48522
+   ],
+   "core_arbiter": [
+    43189,
+    45237,
+    47285,
+    49333
+   ],
+   "core_arbiter_gather": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "core_gather_wait_per_burst": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "core_gather_bound": [
+    {
+     "window": 0,
+     "channel": 0,
+     "requests": 0
+    },
+    {
+     "window": 0,
+     "channel": 0,
+     "requests": 0
+    },
+    {
+     "window": 0,
+     "channel": 0,
+     "requests": 0
+    },
+    {
+     "window": 0,
+     "channel": 0,
+     "requests": 0
+    }
+   ],
+   "core_loads": [
+    85,
+    85,
+    85,
+    85
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 19584,
+    "read1": 19584,
+    "read2": 19584,
+    "read3": 19584,
+    "read4": 19584,
+    "read5": 19584,
+    "read6": 19584,
+    "read7": 19584,
+    "write0": 8192,
+    "write1": 8192
+   },
+   "wall_s": 0.27249884605407715,
+   "family": "MLA",
+   "arrays_per_core": 1,
+   "ring": 10
+  },
+  {
+   "label": "MLA K ring 10, 1 core x 4 arrays",
+   "cores": 1,
+   "ok": true,
+   "errs": [
+    0.0021503947827029367
+   ],
+   "cycles": 34831,
+   "us": 34.831,
+   "units": 16,
+   "unit_name": "KV tile",
+   "per_unit": 2176.9375,
+   "eta_bw": 0.15526398897533805,
+   "eta_mfu": 0.1249461686428756,
+   "eta_mfu_chip": 0.1249461686428756,
+   "channel_util": 0.14056443972323504,
+   "inflight_mean": 21962.30254658207,
+   "inflight_p90": 73728,
+   "dram_read": 1253376,
+   "dram_write": 131072,
+   "macs": 71303168,
+   "core_cycles": [
+    34831
+   ],
+   "core_arbiter": [
+    6860
+   ],
+   "core_arbiter_gather": [
+    0
+   ],
+   "core_gather_wait_per_burst": [
+    0.0
+   ],
+   "core_gather_bound": [
+    {
+     "window": 0,
+     "channel": 0,
+     "requests": 0
+    }
+   ],
+   "core_loads": [
+    85
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 4992,
+    "read1": 4992,
+    "read2": 4864,
+    "read3": 4864,
+    "read4": 4864,
+    "read5": 4864,
+    "read6": 4864,
+    "read7": 4864,
+    "write0": 2048,
+    "write1": 2048
+   },
+   "wall_s": 0.05332469940185547,
+   "family": "MLA",
+   "arrays_per_core": 4,
+   "ring": 10
+  }
+ ],
+ "mlp_striping": [
+  {
+   "label": "MoE ring 12, 1 core(s) x 32 experts, striping 1",
+   "cores": 1,
+   "ok": true,
+   "errs": [
+    0.0030918627255613596
+   ],
+   "cycles": 315951,
+   "us": 315.951,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 9873.46875,
+   "eta_bw": 0.1998347845077243,
+   "eta_mfu": 0.6222737069988701,
+   "eta_mfu_chip": 0.15556842674971752,
+   "channel_util": 0.16094267782029492,
+   "inflight_mean": 49144.80496026282,
+   "inflight_p90": 205312,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    315951
+   ],
+   "core_arbiter": [
+    268
+   ],
+   "core_arbiter_gather": [
+    47187388
+   ],
+   "core_gather_wait_per_burst": [
+    320.00995551215277
+   ],
+   "core_gather_bound": [
+    {
+     "window": 8028,
+     "channel": 147200,
+     "requests": 147456
+    }
+   ],
+   "core_loads": [
+    1025
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 51344,
+    "read1": 51856,
+    "read2": 49760,
+    "read3": 50544,
+    "read4": 50240,
+    "read5": 50592,
+    "read6": 51968,
+    "read7": 50496,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "wall_s": 1.7711882591247559,
+   "striping": 1
+  },
+  {
+   "label": "MoE ring 12, 2 core(s) x 16 experts, striping 1",
+   "cores": 2,
+   "ok": true,
+   "errs": [
+    0.0030495812144114755,
+    0.0030918627255613596
+   ],
+   "cycles": 163047,
+   "us": 163.047,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 5095.21875,
+   "eta_bw": 0.38725030206014216,
+   "eta_mfu": 0.6029181769673775,
+   "eta_mfu_chip": 0.30145908848368874,
+   "channel_util": 0.31188552993922,
+   "inflight_mean": 114158.77600937153,
+   "inflight_p90": 262144,
+   "dram_read": 13018112,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    163047,
+    159696
+   ],
+   "core_arbiter": [
+    67372,
+    21703
+   ],
+   "core_arbiter_gather": [
+    35581864,
+    36796796
+   ],
+   "core_gather_wait_per_burst": [
+    478.86875538329025,
+    503.01831802274717
+   ],
+   "core_gather_bound": [
+    {
+     "window": 9592,
+     "channel": 74219,
+     "requests": 74304
+    },
+    {
+     "window": 11709,
+     "channel": 73072,
+     "requests": 73152
+    }
+   ],
+   "core_loads": [
+    513,
+    513
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 48784,
+    "read1": 50360,
+    "read2": 50040,
+    "read3": 54064,
+    "read4": 53328,
+    "read5": 50424,
+    "read6": 50880,
+    "read7": 48936,
+    "write0": 48944,
+    "write1": 49360
+   },
+   "wall_s": 1.7752485275268555,
+   "striping": 1
+  },
+  {
+   "label": "MoE ring 12, 4 core(s) x 8 experts, striping 1",
+   "cores": 4,
+   "ok": true,
+   "errs": [
+    0.0029848694436391317,
+    0.0030495812144114755,
+    0.0028115865014085536,
+    0.0030918627255613596
+   ],
+   "cycles": 97637,
+   "us": 97.637,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 3051.15625,
+   "eta_bw": 0.6467220418488893,
+   "eta_mfu": 0.5034157133054068,
+   "eta_mfu_chip": 0.5034157133054068,
+   "channel_util": 0.5208681135225376,
+   "inflight_mean": 296092.6225918453,
+   "inflight_p90": 550400,
+   "dram_read": 13019136,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    97637,
+    93655,
+    90510,
+    96090
+   ],
+   "core_arbiter": [
+    231049,
+    170484,
+    110802,
+    177099
+   ],
+   "core_arbiter_gather": [
+    35884484,
+    30072761,
+    28044654,
+    35801110
+   ],
+   "core_gather_wait_per_burst": [
+    946.3207805907173,
+    826.5380661829375,
+    764.7429646596859,
+    981.390076754386
+   ],
+   "core_gather_bound": [
+    {
+     "window": 7380,
+     "channel": 37895,
+     "requests": 37920
+    },
+    {
+     "window": 6033,
+     "channel": 36354,
+     "requests": 36384
+    },
+    {
+     "window": 5463,
+     "channel": 36635,
+     "requests": 36672
+    },
+    {
+     "window": 6302,
+     "channel": 36454,
+     "requests": 36480
+    }
+   ],
+   "core_loads": [
+    257,
+    257,
+    257,
+    257
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 51832,
+    "read1": 50688,
+    "read2": 51832,
+    "read3": 46416,
+    "read4": 50752,
+    "read5": 54432,
+    "read6": 50200,
+    "read7": 50696,
+    "write0": 49248,
+    "write1": 49056
+   },
+   "wall_s": 2.0069222450256348,
+   "striping": 1
+  },
+  {
+   "label": "MoE ring 12, 1 core(s) x 32 experts, striping 2",
+   "cores": 1,
+   "ok": true,
+   "errs": [
+    0.0030918627255613596
+   ],
+   "cycles": 298058,
+   "us": 298.058,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 9314.3125,
+   "eta_bw": 0.21183125431962907,
+   "eta_mfu": 0.6596300048983755,
+   "eta_mfu_chip": 0.16490750122459388,
+   "channel_util": 0.1706043790134806,
+   "inflight_mean": 34618.595414315336,
+   "inflight_p90": 189440,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    298058
+   ],
+   "core_arbiter": [
+    72430
+   ],
+   "core_arbiter_gather": [
+    0
+   ],
+   "core_gather_wait_per_burst": [
+    0.0
+   ],
+   "core_gather_bound": [
+    {
+     "window": 0,
+     "channel": 0,
+     "requests": 147456
+    }
+   ],
+   "core_loads": [
+    1025
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 50944,
+    "read1": 50944,
+    "read2": 50828,
+    "read3": 50828,
+    "read4": 50820,
+    "read5": 50924,
+    "read6": 50696,
+    "read7": 50816,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "wall_s": 1.692152738571167,
+   "striping": 2
+  },
+  {
+   "label": "MoE ring 12, 2 core(s) x 16 experts, striping 2",
+   "cores": 2,
+   "ok": true,
+   "errs": [
+    0.0030495812144114755,
+    0.0030918627255613596
+   ],
+   "cycles": 153995,
+   "us": 153.995,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 4812.34375,
+   "eta_bw": 0.4100133121205234,
+   "eta_mfu": 0.6383583882593591,
+   "eta_mfu_chip": 0.31917919412967954,
+   "channel_util": 0.3302185135881035,
+   "inflight_mean": 86625.38955160882,
+   "inflight_p90": 242176,
+   "dram_read": 13018112,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    153995,
+    151208
+   ],
+   "core_arbiter": [
+    97197,
+    45136
+   ],
+   "core_arbiter_gather": [
+    21314672,
+    8686880
+   ],
+   "core_gather_wait_per_burst": [
+    286.8576658053402,
+    118.75109361329834
+   ],
+   "core_gather_bound": [
+    {
+     "window": 12256,
+     "channel": 39264,
+     "requests": 74304
+    },
+    {
+     "window": 7520,
+     "channel": 26672,
+     "requests": 73152
+    }
+   ],
+   "core_loads": [
+    513,
+    513
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 50072,
+    "read1": 51292,
+    "read2": 53144,
+    "read3": 52752,
+    "read4": 46256,
+    "read5": 53324,
+    "read6": 52396,
+    "read7": 47580,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "wall_s": 1.8136775493621826,
+   "striping": 2
+  },
+  {
+   "label": "MoE ring 12, 4 core(s) x 8 experts, striping 2",
+   "cores": 4,
+   "ok": true,
+   "errs": [
+    0.0029848694436391317,
+    0.0030495812144114755,
+    0.0028115865014085536,
+    0.0030918627255613596
+   ],
+   "cycles": 98002,
+   "us": 98.002,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 3062.5625,
+   "eta_bw": 0.6443133813595641,
+   "eta_mfu": 0.5015407848819412,
+   "eta_mfu_chip": 0.5015407848819412,
+   "channel_util": 0.5189281851390788,
+   "inflight_mean": 244304.63051774455,
+   "inflight_p90": 691712,
+   "dram_read": 13019136,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    98002,
+    97330,
+    96970,
+    96658
+   ],
+   "core_arbiter": [
+    170604,
+    217690,
+    209290,
+    219207
+   ],
+   "core_arbiter_gather": [
+    35746864,
+    30909960,
+    33013064,
+    30302160
+   ],
+   "core_gather_wait_per_burst": [
+    942.6915611814346,
+    849.5481530343008,
+    900.2253490401396,
+    830.6513157894736
+   ],
+   "core_gather_bound": [
+    {
+     "window": 6672,
+     "channel": 32496,
+     "requests": 37920
+    },
+    {
+     "window": 5904,
+     "channel": 29416,
+     "requests": 36384
+    },
+    {
+     "window": 5936,
+     "channel": 30552,
+     "requests": 36672
+    },
+    {
+     "window": 5952,
+     "channel": 29632,
+     "requests": 36480
+    }
+   ],
+   "core_loads": [
+    257,
+    257,
+    257,
+    257
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 50452,
+    "read1": 50452,
+    "read2": 52404,
+    "read3": 52404,
+    "read4": 50492,
+    "read5": 50492,
+    "read6": 50076,
+    "read7": 50076,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "wall_s": 1.9303865432739258,
+   "striping": 2
+  },
+  {
+   "label": "MoE ring 12, 1 core(s) x 32 experts, striping 8",
+   "cores": 1,
+   "ok": true,
+   "errs": [
+    0.0030918627255613596
+   ],
+   "cycles": 300897,
+   "us": 300.897,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 9403.03125,
+   "eta_bw": 0.20983260052443195,
+   "eta_mfu": 0.6534063151177978,
+   "eta_mfu_chip": 0.16335157877944945,
+   "channel_util": 0.16899470582956957,
+   "inflight_mean": 49817.84315563133,
+   "inflight_p90": 198144,
+   "dram_read": 13017600,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    300897
+   ],
+   "core_arbiter": [
+    291823
+   ],
+   "core_arbiter_gather": [
+    46055424
+   ],
+   "core_gather_wait_per_burst": [
+    312.3333333333333
+   ],
+   "core_gather_bound": [
+    {
+     "window": 24576,
+     "channel": 49152,
+     "requests": 147456
+    }
+   ],
+   "core_loads": [
+    1025
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 50850,
+    "read1": 50850,
+    "read2": 50850,
+    "read3": 50850,
+    "read4": 50850,
+    "read5": 50850,
+    "read6": 50850,
+    "read7": 50850,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "wall_s": 1.7559936046600342,
+   "striping": 8
+  },
+  {
+   "label": "MoE ring 12, 2 core(s) x 16 experts, striping 8",
+   "cores": 2,
+   "ok": true,
+   "errs": [
+    0.0030495812144114755,
+    0.0030918627255613596
+   ],
+   "cycles": 180182,
+   "us": 180.182,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 5630.6875,
+   "eta_bw": 0.3504234607230467,
+   "eta_mfu": 0.5455816896249348,
+   "eta_mfu_chip": 0.2727908448124674,
+   "channel_util": 0.28222574951992985,
+   "inflight_mean": 135535.2958231122,
+   "inflight_p90": 411904,
+   "dram_read": 13018112,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    179830,
+    180182
+   ],
+   "core_arbiter": [
+    451795,
+    420679
+   ],
+   "core_arbiter_gather": [
+    45226144,
+    62332832
+   ],
+   "core_gather_wait_per_burst": [
+    608.6636520241171,
+    852.1001749781277
+   ],
+   "core_gather_bound": [
+    {
+     "window": 12576,
+     "channel": 43152,
+     "requests": 74304
+    },
+    {
+     "window": 16000,
+     "channel": 57152,
+     "requests": 73152
+    }
+   ],
+   "core_loads": [
+    513,
+    513
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 50852,
+    "read1": 50852,
+    "read2": 50852,
+    "read3": 50852,
+    "read4": 50852,
+    "read5": 50852,
+    "read6": 50852,
+    "read7": 50852,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "wall_s": 1.7899417877197266,
+   "striping": 8
+  },
+  {
+   "label": "MoE ring 12, 4 core(s) x 8 experts, striping 8",
+   "cores": 4,
+   "ok": true,
+   "errs": [
+    0.0029848694436391317,
+    0.0030495812144114755,
+    0.0028115865014085536,
+    0.0030918627255613596
+   ],
+   "cycles": 123586,
+   "us": 123.586,
+   "units": 32,
+   "unit_name": "token tile",
+   "per_unit": 3862.0625,
+   "eta_bw": 0.5109316589257683,
+   "eta_mfu": 0.39771495153172687,
+   "eta_mfu_chip": 0.39771495153172687,
+   "channel_util": 0.4115029210428366,
+   "inflight_mean": 350334.96221254836,
+   "inflight_p90": 842752,
+   "dram_read": 13019136,
+   "dram_write": 3145728,
+   "macs": 805306368,
+   "core_cycles": [
+    122562,
+    122922,
+    123234,
+    123586
+   ],
+   "core_arbiter": [
+    528243,
+    514503,
+    496767,
+    479491
+   ],
+   "core_arbiter_gather": [
+    52914832,
+    61085488,
+    68902368,
+    76432256
+   ],
+   "core_gather_wait_per_burst": [
+    1395.4333333333334,
+    1678.910729991205,
+    1878.8821989528797,
+    2095.182456140351
+   ],
+   "core_gather_bound": [
+    {
+     "window": 6672,
+     "channel": 21768,
+     "requests": 37920
+    },
+    {
+     "window": 7872,
+     "channel": 28512,
+     "requests": 36384
+    },
+    {
+     "window": 8064,
+     "channel": 28608,
+     "requests": 36672
+    },
+    {
+     "window": 7936,
+     "channel": 28544,
+     "requests": 36480
+    }
+   ],
+   "core_loads": [
+    257,
+    257,
+    257,
+    257
+   ],
+   "mma_load_level": 8,
+   "channels": {
+    "read0": 50856,
+    "read1": 50856,
+    "read2": 50856,
+    "read3": 50856,
+    "read4": 50856,
+    "read5": 50856,
+    "read6": 50856,
+    "read7": 50856,
+    "write0": 49152,
+    "write1": 49152
+   },
+   "wall_s": 1.8725144863128662,
+   "striping": 8
+  }
+ ],
+ "module0_recommended": {
+  "eta_bw_moe": 0.6443133813595641,
+  "eta_mfu_moe": 0.5015407848819412,
+  "eta_bw_mla": 0.4458183916573925,
+  "eta_mfu_mla": 0.35876509624500225,
+  "moe_cycles_per_tile": 3062.5625,
+  "mla_cycles_per_tile": 758.15625,
+  "source": "model/sweeps_mlp.py cores sweep: 4 cores x 1 array, WGT ring 12 (MLA K ring 10), striping 2, broadcast, FIFO 8"
+ },
+ "module0_1core": {
+  "eta_bw_moe": 0.30444678039983414,
+  "eta_mfu_moe": 0.23700731968406738,
+  "eta_bw_mla": 0.15526398897533805,
+  "eta_mfu_mla": 0.1249461686428756,
+  "moe_cycles_per_tile": 6480.8125,
+  "mla_cycles_per_tile": 2176.9375,
+  "source": "model/sweeps_mlp.py cores sweep: 1 core x 4-array MMA unit, WGT ring 12 (MLA K ring 10), striping 2, broadcast, FIFO 8"
+ },
+ "mlp_wall_s": 99.67002511024475
 }

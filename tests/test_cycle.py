@@ -302,3 +302,88 @@ def test_request_striping_shortens_the_transfer_not_the_channel_busy(k):
     assert sum(v for key, v in t.channels.items() if key.startswith("read")) == t.per_queue["LOAD"]["busy"]
     assert sum(1 for key, v in t.channels.items() if key.startswith("read") and v) == min(2 * k, T.read_channels)
 
+
+
+# ------------------------------------------------------------------ phase 6: broadcast, cores, arbiter
+
+def shared_a_program(m):
+    """Two MMAs on different ACC/WGT banks that read the same INP tile (the A operand)."""
+    A = rng.standard_normal((64, 128)); B = rng.standard_normal((128, 128))
+    ra = put_bf16(m, 0, A); rb = put_bf16(m, 1 << 16, B)
+    p = Program()
+    p.load2d(INP(0), ra, 64, 128); p.push(Q.LOAD, Q.MMA)
+    p.load2d(WGT(0), rb, 128, 128); p.push(Q.LOAD, Q.MMA)
+    p.load2d(WGT(1), rb, 128, 128); p.push(Q.LOAD, Q.MMA)
+    for _ in range(3):
+        p.pop(Q.MMA, Q.LOAD)
+    p.mma(ACC(0), INP(0), WGT(0)); p.mma(ACC(1), INP(0), WGT(1))
+    p.finish()
+    return p
+
+
+@pytest.mark.parametrize("broadcast", [False, True])
+def test_operand_broadcast_lets_two_arrays_read_one_a_tile(broadcast):
+    T = replace(KV260, n_arrays=2, operand_broadcast=broadcast)
+    m = CycleMachine(timing=T)
+    m.run(shared_a_program(m).instrs)
+    a, b = recs(m.timing_report, "MMA")
+    if broadcast:
+        assert b.start == a.start + 1 and b.stall_bank == 0
+    else:
+        assert b.start == a.start + T.mma_occupancy(64, 128, 128) and m.timing_report.banks == {"INP/bank0": b.stall_bank}
+
+
+def stream_program(m, n_tiles=16):
+    """A pure weight stream: n_tiles LOAD.2D of 32 KB into distinct WGT slots, no tokens (saturates the channels)."""
+    B = rng.standard_normal((128, 128)); rb = put_bf16(m, 1 << 16, B)
+    p = Program()
+    for i in range(n_tiles):
+        p.load2d(WGT(i), rb, 128, 128)
+    p.finish()
+    return p
+
+
+def test_multicore_copies_of_an_idle_channel_program_cost_one():
+    """c copies of the GEMM program on c cores take ~1x the time of one when the channels are idle: with the
+    config-C write channels (2) the 32 KB f32 STORE of the copies would already contend, so the descriptor here
+    has 8 write channels; the read side (8 channels, 2 loads per copy) is idle enough as is."""
+    from tcta.cycle import run_multicore
+    from tcta.timing import CONFIG_C_CORE
+    T = replace(CONFIG_C_CORE, write_channels=8)
+    A = rng.standard_normal((64, 128)); B = rng.standard_normal((128, 128))
+
+    def load(m):
+        put_bf16(m, 0, A); put_bf16(m, 1 << 16, B)
+
+    def prog():
+        m = Machine()
+        p, *_ = gemm_program(m)
+        return p
+
+    p = prog()
+    one, _ = run_multicore(T, [dict(instrs=p.instrs, load=load)])
+    two, ms = run_multicore(T, [dict(instrs=p.instrs, load=load)] * 2)
+    four, _ = run_multicore(T, [dict(instrs=p.instrs, load=load)] * 4)
+    assert two.cycles <= 1.15 * one.cycles and four.cycles <= 1.3 * one.cycles       # channels mostly idle
+    assert max(t.cycles for t in two.cores) <= 1.15 * min(t.cycles for t in two.cores)   # identical programs, near-identical timing
+    # per-core functional result == single-core result
+    single = CycleMachine(timing=T); load(single); single.run(p.instrs)
+    for m in ms:
+        assert np.array_equal(m.dram, single.dram) and m.status["ok"]
+
+
+def test_multicore_saturated_channels_scale_with_cores_and_wait_at_the_arbiter():
+    from tcta.cycle import run_multicore
+    from tcta.timing import CONFIG_C_CORE
+    cfg = DeviceConfig(slots={SP.INP: 2, SP.WGT: 16, SP.ACC: 6, SP.VEC: 16, SP.STATE: 1})
+    B = rng.standard_normal((128, 128))
+
+    def load(m):
+        put_bf16(m, 1 << 16, B)
+
+    p = stream_program(Machine(cfg=cfg))
+    one, _ = run_multicore(CONFIG_C_CORE, [dict(instrs=p.instrs, load=load, cfg=cfg)])
+    two, _ = run_multicore(CONFIG_C_CORE, [dict(instrs=p.instrs, load=load, cfg=cfg)] * 2)
+    assert one.channel_util > 0.8                                                    # one program saturates the 8 channels
+    assert two.cycles >= 1.7 * (one.cycles - CONFIG_C_CORE.dram_latency_cycles)      # ~2x the transfer time
+    assert all(w > 0 for w in two.arbiter_wait) and max(two.arbiter_wait) <= 1.5 * min(two.arbiter_wait)   # both wait, fairly

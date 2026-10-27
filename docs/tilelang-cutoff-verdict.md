@@ -816,3 +816,85 @@ gather row, `-1` rows free, no speculation past `LOOP r`, accumulate
 forwarding, the functional run's dispatch order and operand shapes. The full
 table with the leverage each parameter showed is `docs/cycle-model-report.md`
 §6.
+
+# Phase 6: memory-level parallelism (rings, cores, the real η_bw)
+
+Task: `docs/phase6-mlp-task.md`. ISA v0.1.4 (§11 only). Deliverables: I1
+ring sweep, I2 multi-core `CycleMachine` (`run_multicore`, arbiter,
+`stall_arbiter`; 4 new tests), I3 core sweep, I4 striping × cores, I5 Module
+0 keys (`module0_recommended`, consumed by default), I6 this section and
+`docs/phase6-mlp-report.md`. Whole repo: **84 passed**. Code touched:
+`sim/tcta/{timing,cycle,isa}.py`, `compiler/prototype/{moe,mla,kda}_kernel.py`
+(ring depth, expert subset, K-ring span only), `model/{sweeps_mlp,module0,sweeps}.py`.
+The repo in this session is canonical; the spec delta (§11) was applied as
+received.
+
+## Verdict: PASS
+
+I1–I6 delivered; every one of the 39 timed runs (16 single-stream, 23
+through `run_multicore`) reproduced its fixture, the multi-core runs per core; the
+H2(c) dependency check still passes on every family; no multi-core per-core
+result differs from the single-core run (`test_multicore_*`). I6 states a
+descriptor with numbers (below).
+
+## The answers, in one table (config C, cycles at 1 GHz; `docs/phase6-mlp-report.md`)
+
+| Question | Number | Decision |
+|---|---|---|
+| I1 ring depth, MoE token tile | 9974 (ring 3, §1 descriptor) → 8561 (flat `[W1\|W3]`, 3) → 7116 (6) → **6481 (12)** → 6750 (16); η_bw 0.198 → 0.304; 50 KB in flight at the knee, channels 25 % | **WGT ring 12**; the knee is the tile's serial VEC/SFU and accumulation chains, not Little's law |
+| I1 ring depth, MLA KV tile | 2772 (K ring 4) → **2177 (10)** → 2177 (20, needs FIFO 36); η_bw 0.122 → 0.155 | **K ring over 2 KV tiles (10 slots)** |
+| FIFO at the knee | ring 12 holds MMA→LOAD at depth 8 for 2061 cycles, 0 cost; MLA ring 20 times out functionally at 8 | **FIFO 8 stands**; rule FIFO ≥ r·(d − 1) |
+| I2 cores sanity | GEMM copies 1.00× / 1.00× / 1.11× (idle channels); 16 × 32 KB stream 1.87× / 3.61× (channels 87 → 97 %) | arrival-order arbiter, ties rotate; recorded |
+| I3 MoE on 1 / 2 / 4 cores (E/c experts) | per tile 9314 / 4812 / **3063**; η_bw 0.212 / 0.410 / **0.644**; η_mfu 0.165 / 0.319 / **0.502**; channels 17 / 33 / 52 %; per-core completion within 1.4 % | 4 cores |
+| I3 MLA copies on 1 / 2 / 4 cores | per tile 2561 / 1356 / **758**; η_bw 0.132 / 0.249 / **0.446**; per-core times 42378 … 48522 (convoy, +4.8 % per core index) | 4 cores; arbiter finding |
+| I3 vs I1: 4 cores × 1 array vs 1 core × 4-array unit | MoE 3063 vs 6481 (2.1×); MLA 758 vs 2177 (2.9×) | **4 cores × 1 array** |
+| I4 striping × cores (MoE) | k = 2: −5.7 % (1 core), −5.6 % (2), +0.4 % (4); k = 8: −4.8 %, +10.5 %, +26.6 % | keep **2**; never 8 |
+| I5 Module 0 | η_bw 0.146 → **0.644**, η_mfu 0.113 → **0.502**; N 255 → **58** chips per replica; $0.249 → **$0.096** per Mtoken (B* $0.093 → $0.036); 12LP+/HBM2e N 76 → 21 | `module0_recommended` is the default |
+| I6 slots per core | INP 5 (MLA Q resident), WGT 32 (knee uses 20 for MoE, 10 for MLA; ≥ 24), ACC 8 + 2, VEC 64, STATE 2 | as §11 |
+
+η_bw by lever (MoE tile): 0.146 (phase 5) → 0.198 (striping 2 + broadcast +
+FIFO 8 + WGT banks) → 0.230 (one `[W1|W3]` ring) → 0.304 (ring 12) → **0.644**
+(4 cores). Two thirds of the gain is cores, a quarter the ring.
+
+## Findings for the main session
+
+1. **Descriptor decision: config C is 4 cores × one 64×64 array** (I3 vs I1
+   above), 8 + 2 shared channels, striping 2, FIFO 8, INP 5 / WGT 32 per
+   core. The 4-array single core buys 30 % (MoE) and 15 % (MLA) over one
+   array because these decode tiles are serial chains; four streams buy
+   2.1× and 2.9×.
+2. **The ring knee is the consumer, not Little's law**: the MoE token tile at
+   ring 12 has 50 KB in flight and 25 % channel utilization yet gains nothing
+   from ring 16, because per tile the SFU is busy 3331 cycles (VSIGMOID 2048
+   at 8 lanes) and the arrays run 6144 array-cycles of accumulation chains.
+   `sfu_lanes` 8 → 16 is the next single-stream lever (~−1000 cycles per
+   6481-cycle tile).
+3. **Arrival-order arbitration has a convoy mode on identical lock-step
+   programs**: four MLA copies finish 128 cycles per KV tile apart per core
+   index (+18 % chip time over one core alone); a rotating tie-break does not
+   remove it. A round-robin grant across cores with pending requests, or
+   staggered starts, would.
+4. **At 4 cores the chip is request-queue-bound before bandwidth-bound**:
+   channels 52 % busy, tile requests wait ~850 cycles because the four
+   12-deep rings refill in bursts. The gather window binds on 16 % of bursts
+   at 512 outstanding (never at 1 core); keep 512, not §11's 256.
+5. **FIFO ≥ r·(d − 1) for a ring of depth d with r release tokens per slot**:
+   MLA's K ring over 4 KV tiles (36 tokens on MMA→LOAD) times out
+   functionally at FIFO 8 and gains nothing at 32. The compiler should check
+   the static edge level against the FIFO when it sizes a ring.
+6. **Rings are per pipelined loop**: a ring deeper than the trip count issues
+   everything up front and restarts at the next outer iteration (ring 16 =
+   trip count is slower than 12). Reaching Little's-law depth needs the
+   compiler to flatten the streams it pipelines (`flat_w13`), a program-shape
+   decision.
+7. **Striping is a single-stream lever**: −5.7 % at 1–2 cores, 0 at 4, and
+   8-way striping costs 27 % at 4 cores because every request then occupies
+   every channel.
+8. **MLA K-split reduction** not done (recorded): moot for a one-array core.
+
+## Calibration additions (to the phase-5 list)
+
+The arbiter's grant policy and per-request overhead; the channel interleave
+granularity behind `request_channels`; the gather window (512); `sfu_lanes`
+(now on the MoE critical path); the per-core dispatch and FIFO costs with
+four streams.

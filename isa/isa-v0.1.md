@@ -1,6 +1,6 @@
-# Tile-Centric Tensor Accelerator — ISA Specification v0.1.3 (Gate 1 freeze candidate)
+# Tile-Centric Tensor Accelerator — ISA Specification v0.1.4 (Gate 1 freeze candidate)
 
-Status: Gate 1 freeze candidate. Date: 2026-10-27. v0.1.3 (after the MLA/KDA prototypes, `docs/gate1-report.md`) adds the ACC→WGT/INP move, `VCOPY`, a multiplicative mask mode and ACC-resident masks for `MMA.MASKED`, and row-offset writes into STATE/ACC. v0.1.1 added `LOOP r, step`, an ACC operand for `VGATE`, and the `i32` store qualifier (MoE prototype); v0.1.2 adds per-level loop increments, the LOAD↔STORE edges, f32 gathers into ACC, and the free-sync issue rule (persistent-MoE prototype). See §15.
+Status: Gate 1 freeze candidate. Date: 2026-10-27. v0.1.3 (after the MLA/KDA prototypes, `docs/gate1-report.md`) adds the ACC→WGT/INP move, `VCOPY`, a multiplicative mask mode and ACC-resident masks for `MMA.MASKED`, and row-offset writes into STATE/ACC. v0.1.4 (after the phase-5 cycle model) changes only §11: FIFO 8, INP 5, Little's-law ring depths, request striping, and cores. v0.1.1 added `LOOP r, step`, an ACC operand for `VGATE`, and the `i32` store qualifier (MoE prototype); v0.1.2 adds per-level loop increments, the LOAD↔STORE edges, f32 gathers into ACC, and the free-sync issue rule (persistent-MoE prototype). See §15.
 Owner: ISA. Consumers: functional simulator, cycle model, compiler (tensorize + token insertion), RTL.
 
 This document defines instruction semantics, scratchpad names, data types and the synchronization model. It does not define latency, bandwidth, bank counts, queue depths or encodings beyond what the compiler must know. Those belong to the microarchitecture and are runtime-discoverable parameters (§11).
@@ -337,21 +337,35 @@ Hardware faults stop all queues; the host reads status and resets.
 
 ## 11. Implementation parameters (runtime-discoverable)
 
-The compiler reads these from a device descriptor; the ISA does not fix them.
+The compiler reads these from a device descriptor; the ISA does not fix them. Values revised after the phase-5 cycle model (`docs/cycle-model-report.md`): FIFO depth 8 everywhere (4 deadlocks KDA); INP 5 (MLA Q resident); WGT ring sized by Little's law (§11.1); request striping over 2 channels; A-operand broadcast to the arrays of one core.
 
 | Parameter | v1 KV260 | 22FDX config C (model) |
 |---|---|---|
+| Cores (independent 5-queue instruction streams sharing the DMA channels) | 1 | 4 (one 64×64 array each; see §11.2) |
 | `T_M, T_K, T_N, T_V, T_VR, T_S` | 64, 128, 128, 64, 512, 128 | same |
-| Slots: INP / WGT / ACC / VEC / STATE | 2 / 4 / 2 + 1 wide / 16 / 1 | 8 / 16 / 8 + 2 wide / 64 / 2 |
-| FIFO depth per edge | 4 | 16 |
-| DMA channels (read / write) | 1 / 1 | 8 / 2 |
+| Slots per core: INP / WGT / ACC / VEC / STATE | 2 / 4 / 2 + 1 wide / 16 / 1 | 5 / **32** / 8 + 2 wide / 64 / 2 |
+| FIFO depth per edge | **8** | **8** |
+| DMA channels (read / write), shared by all cores | 1 / 1 | 8 / 2 |
+| Request striping (`request_channels`) | 1 | 2 |
 | `LOAD.IDX` rows in flight | 16 | 256 |
 | Front-end registers | 16 | 16 |
 | `T_DEADLOCK` | 10⁶ | 10⁷ |
 | Chips (COMM) | 2 (emulated) | N (simulated) |
 | Supported qualifiers | all of §4 | all of §4 |
 
----
+### 11.1 Ring depth is a Little's-law number
+
+The decode kernels are weight streams: the LOAD queue's job is to keep bytes in flight, and an in-order queue can only do that through ring slots. Required bytes in flight = memory bandwidth × DRAM latency (config C: 256 B/cycle × 300 cycles ≈ 77 KB per core-equivalent of bandwidth). A ring of `d` tiles of `b` bytes holds `(d − 1) · b`, so
+
+```latex
+d \;\ge\; \frac{\text{BW}\cdot\text{latency}}{b} + 2
+```
+
+For 8 KB WGT tiles at config C that is ≥ 12 slots per stream, which is why the WGT slot count above is 32 (two streams, headroom) and not 16. The scratchpad cost is negligible (256 KB of a 16 MB array); the phase-5 result that one program holds the channels at 13–18 % of peak was a 3-deep ring, not a property of the queue model.
+
+### 11.2 Cores
+
+A core is one instruction stream with its own five queues, scratchpads and token FIFOs. Cores share the DMA channels through an arbiter and nothing else; there is no inter-core token edge in v1 (cross-core dependencies go through DRAM or, in v2, through COMM). A chip with `c` cores runs `c` independent programs, which is the second lever on bytes in flight and the natural unit for expert parallelism within a chip (each core streams different experts). Config C is modelled as 4 cores because its four arrays were already independent in the phase-5 timing model; whether they are 4 cores or one core with a 4-array MMA unit is decided by the phase-6 sweep.
 
 ## 12. Encoding sketch (non-normative)
 

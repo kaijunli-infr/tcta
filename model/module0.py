@@ -342,18 +342,24 @@ def sweeps(w: Workload, s: Serving):
 CYCLE_RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cycle_results.json")
 
 
-def apply_cycle_model(path: str = CYCLE_RESULTS, verbose: bool = True, key: str = "module0") -> dict | None:
+def apply_cycle_model(path: str = CYCLE_RESULTS, verbose: bool = True, key: str = "module0_recommended") -> dict | None:
     """H4 hook (phase 5): replace the eta_bw / eta_mfu planning placeholders (0.7 / 0.5) of the config-C presets
     with the cycle model's measured values (`model/sweeps.py` -> `cycle_results.json`, key "module0"):
     eta_bw from the MoE decode tile (weight stream + token gathers, the bandwidth-bound op of decode), eta_mfu
     from the MoE tile's array utilization; the MLA tile's values are reported alongside. Returns the values
     applied, or None when the results file is absent (placeholders stay). `key` selects the result set:
-    "module0" is the task's DMA rule (one LOAD.2D request occupies one channel), "module0_striped" the what-if
-    where a request is striped over the 8 channels (`DeviceTiming.request_channels`)."""
+    "module0_recommended" (phase 6, the default) is the recommended config-C configuration (4 cores x 1 array,
+    WGT ring 12, request striping 2, operand broadcast; `model/sweeps_mlp.py`); "module0_1core" the same chip as
+    one core with a 4-array MMA unit; "module0" the phase-5 descriptor (3-deep ring, one request per channel, one
+    reader per bank); "module0_striped" phase 5's 8-channel striping what-if. Falls back to "module0" when the
+    requested key is absent."""
     if not os.path.exists(path):
         return None
     with open(path) as fh:
-        m0 = json.load(fh).get(key)
+        res = json.load(fh)
+    m0 = res.get(key)
+    if not m0 and key != "module0":
+        m0, key = res.get("module0"), "module0"
     if not m0:
         return None
     eta_bw, eta_mfu = float(m0["eta_bw_moe"]), float(m0["eta_mfu_moe"])
@@ -379,8 +385,8 @@ def main():
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--cycle-results", default=CYCLE_RESULTS, help="cycle-model results (model/sweeps.py); eta_bw/eta_mfu of the config-C presets")
     ap.add_argument("--placeholders", action="store_true", help="keep the 0.7 / 0.5 planning placeholders")
-    ap.add_argument("--cycle-key", default="module0", choices=["module0", "module0_striped"],
-                    help="which cycle-model result set: the task's one-channel-per-request rule, or LOAD.2D striped over 8 channels")
+    ap.add_argument("--cycle-key", default="module0_recommended", choices=["module0_recommended", "module0_1core", "module0", "module0_striped"],
+                    help="which cycle-model result set (see apply_cycle_model)")
     args = ap.parse_args()
     if not args.placeholders:
         apply_cycle_model(args.cycle_results, verbose=not args.json, key=args.cycle_key)

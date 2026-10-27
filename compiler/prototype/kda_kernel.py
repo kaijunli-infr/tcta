@@ -53,14 +53,14 @@ import tilelang.language as T
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "sim"))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "ref"))
 import common  # noqa: E402
-from tcta.isa import SP, DeviceConfig  # noqa: E402
+from tcta.isa import SP, DEVICE_CONFIG_C, DeviceConfig  # noqa: E402
 
 SEQ, D, CHUNK = 256, 128, 64
 N_CHUNKS = SEQ // CHUNK
 N_SOLVE = 5                 # (I+N)^-1 = prod_{s<=5} (I + N^(2^s)) covers 64 terms for a 64x64 strictly lower N
 
 # ISA §11, 22FDX config C (model): 8 / 16 / 8 + 2 wide / 64 / 2 slots, FIFO depth 16
-CONFIG_C = DeviceConfig(slots={SP.INP: 8, SP.WGT: 16, SP.ACC: 16, SP.VEC: 64, SP.STATE: 2}, fifo_depth=16)
+CONFIG_C = DEVICE_CONFIG_C          # ISA §11 config C (v0.1.4: INP 5, WGT 32, ACC 8 + 2 wide, VEC 64, STATE 2, FIFO 8)
 
 SCOPE_MAP = {
     "tri_s": "tcta.inp", "pb_s": "tcta.inp", "ab_s": "tcta.inp", "Kth_c": "tcta.inp", "Ktl_c": "tcta.inp",

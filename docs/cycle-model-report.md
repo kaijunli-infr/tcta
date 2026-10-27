@@ -14,6 +14,15 @@ form; `program_mla_inp6.txt`, Q resident). Every number below comes from a
 Every timing parameter is a planning value (§6 says which must be calibrated).
 Cycles are at the descriptor's clock: KV260 200 MHz, config C 1 GHz.
 
+**Phase 6 (ISA v0.1.4 §11) revised the config-C descriptor** after this
+report's sweeps: FIFO 8, INP 5, WGT 32 (a Little's-law ring), request
+striping 2, A-operand broadcast, and 4 cores sharing the channels. The §3–§5
+numbers below are the phase-5 descriptor's (kept as `CONFIG_C_PHASE5`;
+`python model/sweeps.py` still reproduces them); the revised descriptor, the
+ring and core sweeps, the multi-core model and the η values Module 0 now
+consumes are in `docs/phase6-mlp-report.md` and `model/sweeps_mlp.py`. The
+rules added for cores are listed at the end of §1.
+
 ## 1. The model as implemented
 
 A post-mortem replay. `CycleMachine.run` is `Machine.run` with a recording
@@ -52,6 +61,17 @@ task's rules: `request_channels` (a LOAD.2D/STORE.2D striped over k channels,
 gather rows round-robin over k channels; 1 = one request on one channel) and
 `ports_per_bank` readers > 1. They exist because the sweeps showed the rules
 themselves set the config-C numbers (§4.7, §4.8).
+
+Phase 6 added three descriptor parameters and the multi-core replay
+(`run_multicore`), with these rules:
+
+| Step | Rule |
+|---|---|
+| striping | `request_channels` = k: a LOAD.2D / STORE.2D goes to the k least-busy channels of its direction and transfers at k × `bytes_per_cycle` (the same channel-cycles, k channel slots); a gather's rows go round-robin over the k channels. Default 2 (§11) |
+| broadcast | `operand_broadcast`: the MMA's A-operand port hold is keyed by the A slot, so MMAs of one core that read the same A tile share the port instead of serializing. Within a core only |
+| cores | `run_multicore(timing, programs)`: one `_Core` per program with its own queues, dispatch, scratchpads, token FIFOs, arrays and VEC pipe; the read and write channel vectors are shared and nothing else is. No inter-core tokens |
+| arbiter | heads of every core are replayed in nondecreasing ready-time order, so requests reach the channels in arrival order; requests ready in the same cycle rotate across cores (round-robin tie-break). A request's wait is max(0, channel busy − (issue + latency)), reported per core as `stall_arbiter` (tile requests) and `stall_arbiter_gather` (gather bursts); it includes queueing behind the core's own requests |
+| chip η | `MultiTiming.eta_mfu` = useful MACs / (Σ arrays × rows × cols × chip cycles), `eta_bw` = Σ DRAM bytes / (read peak × chip cycles), `channel_util` = Σ channel busy / (channels × cycles); `inflight_bytes()` = mean and p90 of the bytes in flight over cycles |
 
 Approximations to keep in mind when reading the numbers:
 

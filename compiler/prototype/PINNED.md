@@ -123,3 +123,37 @@ from the earlier sliding-window prototype).
 - `DeviceTiming.request_channels` (default 1 = the task's rule) is a what-if
   knob: a LOAD.2D/STORE.2D striped over k channels, gather rows round-robin
   over k channels.
+
+## Phase 6 notes (ISA v0.1.4 §11, rings and cores), same versions
+
+- Rings deeper than the trip count of the loop they pipeline are not rings:
+  `T.Pipelined(n, num_stages=s)` with `s ≥ n` issues the n loads up front and
+  the slot ring restarts at the next outer iteration. The phase-3 MoE form
+  streams W13 as two 8-tile loops (W1, W3) and so caps the WGT ring at 8;
+  `build_moe_persistent_kernel(flat_w13=True)` streams `[W1|W3]` as one
+  16-tile loop (x kept resident in 2 INP slots, `K/block_K` x tiles), which is
+  how ring 12 / 16 are reached. `num_stages` is capped at the trip count.
+- `build_moe_persistent_kernel(expert_base, n_experts)` is one core's program
+  in the core sweep: it counts and streams experts `expert_base ..
+  expert_base + n_experts − 1` only; the fixture check selects the tokens
+  whose top-k hit that subset (`sweeps.fam_moe`).
+- `build_mla_kernel(inp_slots=5, kv_unroll=u)`: the K ring spans `u` KV tiles
+  (5·u WGT slots; `u = 1` keeps the phase-5 4-slot form with rope in slot 3),
+  the KV loop runs `n_kv / u` times. A deeper ring needs more release tokens
+  in flight on MMA→LOAD: ring 20 (`u = 4`) has a static MMA→LOAD level of 36
+  and times out in the functional simulator at FIFO 8 (works at 32); MoE
+  ring 16 reaches dynamic level 16 and is merely held at FIFO 8. Rule: a
+  ring of depth d with r release tokens per slot needs FIFO ≥ r·(d − 1) on
+  that edge, or the FIFO, not the ring, sets the bytes in flight.
+- Cycle model, cores (`cycle.run_multicore`): one `_Core` per program (own
+  queues, scratchpads, FIFOs, arrays, VEC pipe); the read and write channel
+  vectors are shared. The event loop replays all heads in ready-time order,
+  so requests reach the channels in arrival order; ties (same cycle) rotate
+  across cores. The arbiter wait of a request is max(0, channel busy − (issue
+  + latency)), so it includes queueing behind the core's own requests;
+  `stall_arbiter` (LOAD.2D/STORE.2D) and `stall_arbiter_gather` are reported
+  per core. `operand_broadcast` keys an MMA's A-operand port hold by the A
+  slot, so the arrays of one core reading the same A tile do not serialize.
+- `DEVICE_CONFIG_C` (functional) and `CONFIG_C` / `CONFIG_C_CORE` (timing)
+  carry the v0.1.4 numbers; `CONFIG_C_PHASE5` is kept so `model/sweeps.py`
+  reproduces the phase-5 tables.

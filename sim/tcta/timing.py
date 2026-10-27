@@ -1,4 +1,5 @@
-"""DeviceTiming: the parameters of the cycle model (phase 5, `docs/phase5-cycle-model-task.md` §2).
+"""DeviceTiming: the parameters of the cycle model (phase 5, `docs/phase5-cycle-model-task.md` §2; phase 6 / ISA v0.1.4
+§11: FIFO 8, striping 2, operand broadcast, cores, the Little's-law WGT ring).
 
 Every number here is a planning value, to be calibrated against Verilator later (`docs/cycle-model-report.md`
 §"calibration"). Two descriptors are provided: `KV260` (v1: one 16x16 array at 200 MHz, one LPDDR channel
@@ -43,18 +44,24 @@ class DeviceTiming:
     dram_latency_cycles: int = 100
     row_gather_cost: str = "row"            # "row" | "burst64"
     max_outstanding_rows: int = 16
-    # ---- channel striping (what-if, phase 5 finding): a LOAD.2D / STORE.2D request is split over this many
-    #      channels (address interleave) and transfers at k * bytes_per_cycle. 1 is the task's rule (§4: one
-    #      request occupies one channel); gathers are never striped ----
+    # ---- channel striping (phase 5 finding, ISA v0.1.4 §11): a LOAD.2D / STORE.2D request is split over this
+    #      many channels (address interleave) and transfers at k * bytes_per_cycle; a gather's rows go
+    #      round-robin over k channels. 1 = one request on one channel (the phase-5 rule) ----
     request_channels: int = 1
+    # ---- operand broadcast (ISA v0.1.4 §11): the arrays of one core read one A tile at once, so MMAs sharing
+    #      an A operand do not contend for its bank's read port ----
+    operand_broadcast: bool = False
+    # ---- cores (ISA v0.1.4 §11.2): independent instruction streams sharing the DMA channels; the number here
+    #      documents the chip, `cycle.run_multicore` takes the programs ----
+    cores: int = 1
     # ---- dequant-on-load (f4.b32 / f8.* / f4.r16): a per-channel rate limit on the raw bytes, no extra latency ----
     dequant_bytes_per_cycle: int = 16
     # ---- scratchpads: slot -> bank = slot mod banks; a bank serves ports_per_bank = (readers, writers) per
     #      cycle; an instruction holds its ports for its duration, a later one waits (reported as stall_bank) ----
     banks: dict = field(default_factory=lambda: {SP.INP: 2, SP.WGT: 4, SP.ACC: 4, SP.VEC: 2, SP.STATE: 1})
     ports_per_bank: tuple = (1, 1)
-    # ---- token FIFOs: one depth, or a dict {(Q, Q): depth} with a "default" key ----
-    fifo_depth: int | dict = 4
+    # ---- token FIFOs: one depth, or a dict {(Q, Q): depth} with a "default" key (v0.1.4: 8; 4 deadlocks KDA) ----
+    fifo_depth: int | dict = 8
     # ---- front end: one dispatch per cycle (PUSH/POP free, ISA §8.5); LOOP/ENDLOOP cost loop_overhead_cycles;
     #      LOOP r waits for the VCOUNT writing R[r] plus vcount_to_loop_latency ----
     loop_overhead_cycles: int = 2
@@ -93,6 +100,10 @@ class DeviceTiming:
 
 KV260 = DeviceTiming()
 
+# Config C after ISA v0.1.4 §11: FIFO 8, request striping 2, operand broadcast, WGT 32 slots (one bank each),
+# outstanding window 512 >= a striped gather's demand (one request per cycle x (latency + transfer) ~ 302).
+# One stream with the four 64x64 arrays as one MMA unit (the phase-5 view; the phase-6 core sweep uses
+# CONFIG_C_CORE for the 4-cores x 1-array view of the same silicon).
 CONFIG_C = DeviceTiming(
     name="config-C",
     f_mhz=1000.0,
@@ -100,10 +111,23 @@ CONFIG_C = DeviceTiming(
     vec_lanes=64,
     sfu_lanes=8, sfu_fused_sub_sum=True,
     read_channels=8, write_channels=2, bytes_per_cycle_per_channel=32, dram_latency_cycles=300,
-    row_gather_cost="burst64", max_outstanding_rows=256,
+    row_gather_cost="burst64", max_outstanding_rows=512,
     dequant_bytes_per_cycle=32,
-    banks={SP.INP: 8, SP.WGT: 16, SP.ACC: 8, SP.VEC: 4, SP.STATE: 2},
-    fifo_depth=16,
+    banks={SP.INP: 8, SP.WGT: 32, SP.ACC: 8, SP.VEC: 4, SP.STATE: 2},
+    fifo_depth=8,
+    request_channels=2, operand_broadcast=True, cores=1,
 )
 
-__all__ = ["DeviceTiming", "KV260", "CONFIG_C", "Q"]
+# The same chip as 4 cores: one 64x64 array per core, the channels shared (ISA v0.1.4 §11.2)
+CONFIG_C_CORE = DeviceTiming(
+    **{**{f.name: getattr(CONFIG_C, f.name) for f in CONFIG_C.__dataclass_fields__.values()},
+       "name": "config-C-core", "n_arrays": 1, "cores": 4})
+
+# The phase-5 descriptor (one request per channel, one reader per bank, FIFO 16, WGT 16), kept so the
+# phase-5 tables can be reproduced
+CONFIG_C_PHASE5 = DeviceTiming(
+    **{**{f.name: getattr(CONFIG_C, f.name) for f in CONFIG_C.__dataclass_fields__.values()},
+       "name": "config-C-phase5", "fifo_depth": 16, "request_channels": 1, "operand_broadcast": False,
+       "max_outstanding_rows": 256, "banks": {SP.INP: 8, SP.WGT: 16, SP.ACC: 8, SP.VEC: 4, SP.STATE: 2}})
+
+__all__ = ["DeviceTiming", "KV260", "CONFIG_C", "CONFIG_C_CORE", "CONFIG_C_PHASE5", "Q"]

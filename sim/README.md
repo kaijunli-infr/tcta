@@ -76,5 +76,18 @@ bank ports, front-end dispatch). `m.timing_report` is a `Timing` with cycles,
 per-queue busy/stall cycles, per-edge FIFO levels and blocked cycles, channel
 utilization, bank conflicts and a Gantt trace (`.trace()`, `.step_trace()` in
 the `Machine.trace` shape). It never changes numerics; `tests/test_cycle.py`
-and `model/sweeps.py` use it. Two what-if knobs default to the task's rules (`request_channels`, `ports_per_bank`). Rules: `docs/cycle-model-report.md`.
+and `model/sweeps.py` use it. Rules: `docs/cycle-model-report.md` §1.
+
+Phase 6 (ISA v0.1.4 §11): `DeviceTiming` gained `request_channels` (a tile
+request striped over k channels), `operand_broadcast` (the arrays of one core
+read one A tile at once) and `cores`; `CONFIG_C` carries the §11 numbers
+(FIFO 8, WGT 32, striping 2, broadcast), `CONFIG_C_CORE` is the same chip as
+four one-array cores, `CONFIG_C_PHASE5` the phase-5 descriptor.
+`cycle.run_multicore(timing, [dict(instrs=..., load=..., cfg=..., dram_bytes=...), ...])`
+replays c programs on c cores (own queues, scratchpads, FIFOs, arrays, VEC
+pipe) against the shared DMA channels through an arrival-order arbiter (ties
+rotate across cores) and returns a `MultiTiming` (chip cycles, η_bw, η_mfu,
+channel utilization, per-core `Timing` with `stall_arbiter`). The multi-core
+runs check every core's functional result against the single-core run
+(`tests/test_cycle.py`, `model/sweeps_mlp.py`).
 

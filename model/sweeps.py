@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """H3: the cycle-model sweeps that answer the Gate 1 report's open questions (`docs/gate1-report.md` §4) with
 numbers (`docs/phase5-cycle-model-task.md` §3). One parameter at a time, on the relevant family, under the
-config-C timing descriptor unless stated; the v1 KV260 descriptor is run for the baseline table.
+phase-5 config-C timing descriptor (`CONFIG_C_PHASE5`) unless stated; the v1 KV260 descriptor is run for the
+baseline table. Phase 6 (ISA v0.1.4 §11: rings, striping, broadcast, cores) is `model/sweeps_mlp.py`.
 
     python model/sweeps.py                          # all sweeps -> model/cycle_results.json, model/cycle_results.md
     python model/sweeps.py --only baseline,inp      # a subset
@@ -40,7 +41,12 @@ from fa_kernel import build_fa_kernel  # noqa: E402
 from tcta import DeviceConfig, Fault  # noqa: E402
 from tcta.cycle import CycleDeadlock, CycleMachine  # noqa: E402
 from tcta.isa import SP  # noqa: E402
-from tcta.timing import CONFIG_C, KV260, DeviceTiming  # noqa: E402
+from tcta.timing import CONFIG_C_PHASE5, KV260, DeviceTiming  # noqa: E402
+
+# These are the phase-5 sweeps: they run on the phase-5 descriptor (3-deep rings, one request per channel, one
+# reader per bank, FIFO 16, WGT 16) so that `python model/sweeps.py` reproduces the phase-5 tables and the
+# `module0` / `module0_striped` keys. The v0.1.4 descriptor and its sweeps are `model/sweeps_mlp.py` (phase 6).
+CONFIG_C = CONFIG_C_PHASE5
 from tile_tir_to_program import tile_tir_to_program  # noqa: E402
 
 FIX = os.path.join(HERE, "..", "fixtures")
@@ -97,13 +103,16 @@ def fam_fa():
     return Family("FA", prog, rep, None, 4 << 20, load, check, 4, "KV tile")
 
 
-def fam_mla(inp_slots=2):
+def fam_mla(inp_slots=2, kv_unroll=1, cfg=None):
+    """`kv_unroll` (phase 6): K ring of 5 * kv_unroll WGT slots (4 at kv_unroll 1)."""
     fx = fixture("mla_decode_absorbed")
-    cfg = DeviceConfig(slots={SP.INP: max(2, inp_slots), SP.WGT: 4, SP.ACC: 6, SP.VEC: 16, SP.STATE: 1})
-    cut = lower_to_tile_tir(mla_kernel.build_mla_kernel(inp_slots=inp_slots), scope_map=mla_kernel.SCOPE_MAP)
+    if cfg is None:
+        cfg = DeviceConfig(slots={SP.INP: max(2, inp_slots), SP.WGT: max(4, 5 * kv_unroll), SP.ACC: 6, SP.VEC: 16, SP.STATE: 1})
+    cut = lower_to_tile_tir(mla_kernel.build_mla_kernel(inp_slots=inp_slots, kv_unroll=kv_unroll), scope_map=mla_kernel.SCOPE_MAP)
     prog, rep = tile_tir_to_program(cut, bx=0, dram=mla_kernel.DRAM, cfg=cfg)
     O = fx["O"].reshape(-1, fx["O"].shape[-1])
-    return Family(f"MLA(INP {inp_slots})", prog, rep, cfg, mla_kernel.DRAM_BYTES, lambda m: mla_kernel.load_dram(m, fx),
+    name = f"MLA(INP {inp_slots})" if kv_unroll == 1 else f"MLA(INP {inp_slots}, K ring {5 * kv_unroll})"
+    return Family(name, prog, rep, cfg, mla_kernel.DRAM_BYTES, lambda m: mla_kernel.load_dram(m, fx),
                   lambda m: common.rowmax_err(mla_kernel.read_o(m, fx).reshape(-1, O.shape[-1]), O), 16, "KV tile")
 
 
@@ -121,22 +130,33 @@ def fam_kda(roundtrip=False):
                   lambda m: mod.load_dram(m, fx), check, 4, "chunk")
 
 
-def fam_moe(num_stages=3, prefetch=True, weight_format="f4.b32"):
+def fam_moe(num_stages=3, prefetch=True, weight_format="f4.b32", flat_w13=False, cfg=None, expert_base=0, n_experts=None):
+    """Phase 6: `flat_w13` (one 16-tile [W1|W3] stream, rings to 16; needs INP >= 4), `expert_base`/`n_experts`
+    (the expert subset one core streams; the check covers the parts of the tokens routed to that subset)."""
     fx = fixture("moe_grouped")
     idx, w, dst = moe_data.pad_lists(fx)
-    cut = lower_to_tile_tir(moe_kernel.build_moe_persistent_kernel(weight_format=weight_format, num_stages=num_stages, prefetch=prefetch),
+    E = moe_kernel.E
+    n_experts = E if n_experts is None else n_experts
+    cut = lower_to_tile_tir(moe_kernel.build_moe_persistent_kernel(weight_format=weight_format, num_stages=num_stages, prefetch=prefetch,
+                                                                   flat_w13=flat_w13, expert_base=expert_base, n_experts=n_experts),
                             scope_map=moe_kernel.SCOPE_MAP)
-    prog, rep = tile_tir_to_program(cut, bx=0, dram=moe_data.DRAM)
+    prog, rep = tile_tir_to_program(cut, bx=0, dram=moe_data.DRAM, cfg=cfg)
     B, D, K = moe_kernel.B, moe_kernel.D, moe_kernel.TOPK
-    tiles = int(sum(-(-int(c) // moe_kernel.BLOCK_M) for c in fx["counts"]))
+    subset = np.arange(expert_base, expert_base + n_experts)
+    tiles = int(sum(-(-int(c) // moe_kernel.BLOCK_M) for c in fx["counts"][subset]))
+    sel = np.isin(fx["topk_idx"], subset)                   # [B, k]: the parts this program produces
 
     def check(m):
         parts = moe_data.read_parts(m, B, K, D)
-        return common.rowmax_err(parts.reshape(-1, D), fx["y_parts"].reshape(-1, D))
+        return common.rowmax_err(parts[sel], fx["y_parts"][sel])
 
-    f = Family(f"MoE (ring {num_stages}{'' if prefetch else ', no prefetch'})", prog, rep, None, moe_data.DRAM_BYTES,
+    name = f"MoE (ring {num_stages}{'' if prefetch else ', no prefetch'}{', flat' if flat_w13 else ''}"
+    if n_experts != E:
+        name += f", experts {expert_base}..{expert_base + n_experts - 1}"
+    f = Family(name + ")", prog, rep, cfg, moe_data.DRAM_BYTES,
                lambda m: moe_data.load_dram(m, fx, idx, w, dst, weight_format), check, tiles, "token tile")
-    f.counts = fx["counts"]
+    f.counts = fx["counts"][subset]
+    f.sel = sel
     return f
 
 
@@ -419,8 +439,13 @@ def main():
             return o.value
         return str(o)
 
+    merged = {}
+    if os.path.exists(args.out):                 # keep the phase-6 keys (mlp_*, module0_recommended, module0_1core)
+        with open(args.out) as fh:
+            merged = json.load(fh)
+    merged.update(results)
     with open(args.out, "w") as fh:
-        json.dump(results, fh, indent=1, default=default)
+        json.dump(merged, fh, indent=1, default=default)
     with open(args.md, "w") as fh:
         fh.write("# Cycle-model sweep tables (generated by model/sweeps.py)\n\nCycles at the descriptor's clock; "
                  "KV260 = 200 MHz, config C = 1 GHz. `per unit` divides the program's cycles by its tiles/chunks.\n\n" + "\n".join(mds))
