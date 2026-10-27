@@ -1,0 +1,66 @@
+# F1: combine, token tile 0
+# n_instrs=61 loops=[(0, 4, 1)] edge_counts={'STORE->VEC': (5, 5), 'VEC->LOAD': (29, 29), 'LOAD->VEC': (28, 28), 'VEC->STORE': (4, 4)}
+# primed=2 hoisted=0 body_end=0 drained=2 max_fifo_level={'LOAD->VEC': 1, 'STORE->VEC': 1, 'VEC->LOAD': 1, 'VEC->STORE': 1}
+# collapsed={'vgate_add': 7, 'gather': 6, 'unrolled_static_loops': 1} shared_slots=0
+# slots={'acc': 'ACC[0]', 'part': 'ACC[1]', 'idx_s': 'VEC[8]'}
+STORE PUSH(to=Q.VEC)
+VEC   PUSH(to=Q.LOAD)
+FE    LOOP(n=4)
+VEC   POP(from=Q.STORE)
+VEC   VFILL(dst=ACC[0], imm=0.0, rows_valid=64, cols_valid=128)
+LOAD  POP(from=Q.VEC)
+LOAD  LOAD.2D(dst=ACC[1], region=Region(base=31457280, dtype='f32', shape=(64, 128), stride=(2048, 4), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=64, cols_valid=128, row0=0, col0=0)  incr={'region.base': 512}
+LOAD  PUSH(to=Q.VEC)
+VEC   POP(from=Q.LOAD)
+VEC   VGATE(acc=ACC[0], vec=ACC[1], op=add)
+VEC   PUSH(to=Q.LOAD)
+LOAD  LOAD.2D(dst=VEC[8], region=Region(base=1245184, dtype='i32', shape=(1, 64), stride=(1024, 4), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=1, cols_valid=64, row0=0, col0=0)
+LOAD  POP(from=Q.VEC)
+LOAD  LOAD.IDX(dst=ACC[1], region=Region(base=27262976, dtype='f32', shape=(1536, 512), stride=(2048, 4), scale_t=1.0, scales_base=None, scales_stride=0), idx=VEC[8], nrows=64, row_bytes=2048, cols_valid=128, col0=0)  incr={'col0': 128}
+LOAD  PUSH(to=Q.VEC)
+VEC   POP(from=Q.LOAD)
+VEC   VGATE(acc=ACC[0], vec=ACC[1], op=add)
+VEC   PUSH(to=Q.LOAD)
+LOAD  LOAD.2D(dst=VEC[8], region=Region(base=1246208, dtype='i32', shape=(1, 64), stride=(1024, 4), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=1, cols_valid=64, row0=0, col0=0)
+LOAD  POP(from=Q.VEC)
+LOAD  LOAD.IDX(dst=ACC[1], region=Region(base=27262976, dtype='f32', shape=(1536, 512), stride=(2048, 4), scale_t=1.0, scales_base=None, scales_stride=0), idx=VEC[8], nrows=64, row_bytes=2048, cols_valid=128, col0=0)  incr={'col0': 128}
+LOAD  PUSH(to=Q.VEC)
+VEC   POP(from=Q.LOAD)
+VEC   VGATE(acc=ACC[0], vec=ACC[1], op=add)
+VEC   PUSH(to=Q.LOAD)
+LOAD  LOAD.2D(dst=VEC[8], region=Region(base=1247232, dtype='i32', shape=(1, 64), stride=(1024, 4), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=1, cols_valid=64, row0=0, col0=0)
+LOAD  POP(from=Q.VEC)
+LOAD  LOAD.IDX(dst=ACC[1], region=Region(base=27262976, dtype='f32', shape=(1536, 512), stride=(2048, 4), scale_t=1.0, scales_base=None, scales_stride=0), idx=VEC[8], nrows=64, row_bytes=2048, cols_valid=128, col0=0)  incr={'col0': 128}
+LOAD  PUSH(to=Q.VEC)
+VEC   POP(from=Q.LOAD)
+VEC   VGATE(acc=ACC[0], vec=ACC[1], op=add)
+VEC   PUSH(to=Q.LOAD)
+LOAD  LOAD.2D(dst=VEC[8], region=Region(base=1248256, dtype='i32', shape=(1, 64), stride=(1024, 4), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=1, cols_valid=64, row0=0, col0=0)
+LOAD  POP(from=Q.VEC)
+LOAD  LOAD.IDX(dst=ACC[1], region=Region(base=27262976, dtype='f32', shape=(1536, 512), stride=(2048, 4), scale_t=1.0, scales_base=None, scales_stride=0), idx=VEC[8], nrows=64, row_bytes=2048, cols_valid=128, col0=0)  incr={'col0': 128}
+LOAD  PUSH(to=Q.VEC)
+VEC   POP(from=Q.LOAD)
+VEC   VGATE(acc=ACC[0], vec=ACC[1], op=add)
+VEC   PUSH(to=Q.LOAD)
+LOAD  LOAD.2D(dst=VEC[8], region=Region(base=1249280, dtype='i32', shape=(1, 64), stride=(1024, 4), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=1, cols_valid=64, row0=0, col0=0)
+LOAD  POP(from=Q.VEC)
+LOAD  LOAD.IDX(dst=ACC[1], region=Region(base=27262976, dtype='f32', shape=(1536, 512), stride=(2048, 4), scale_t=1.0, scales_base=None, scales_stride=0), idx=VEC[8], nrows=64, row_bytes=2048, cols_valid=128, col0=0)  incr={'col0': 128}
+LOAD  PUSH(to=Q.VEC)
+VEC   POP(from=Q.LOAD)
+VEC   VGATE(acc=ACC[0], vec=ACC[1], op=add)
+VEC   PUSH(to=Q.LOAD)
+LOAD  LOAD.2D(dst=VEC[8], region=Region(base=1250304, dtype='i32', shape=(1, 64), stride=(1024, 4), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=1, cols_valid=64, row0=0, col0=0)
+LOAD  POP(from=Q.VEC)
+LOAD  LOAD.IDX(dst=ACC[1], region=Region(base=27262976, dtype='f32', shape=(1536, 512), stride=(2048, 4), scale_t=1.0, scales_base=None, scales_stride=0), idx=VEC[8], nrows=64, row_bytes=2048, cols_valid=128, col0=0)  incr={'col0': 128}
+LOAD  PUSH(to=Q.VEC)
+VEC   POP(from=Q.LOAD)
+VEC   VGATE(acc=ACC[0], vec=ACC[1], op=add)
+VEC   PUSH(to=Q.LOAD)
+VEC   PUSH(to=Q.STORE)
+STORE POP(from=Q.VEC)
+STORE STORE.2D(src=ACC[0], region=Region(base=32505856, dtype='f32', shape=(64, 128), stride=(2048, 4), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=64, cols_valid=128, row0=0, col0=0, wide=False)  incr={'region.base': 512}
+STORE PUSH(to=Q.VEC)
+FE    ENDLOOP()
+VEC   POP(from=Q.STORE)
+LOAD  POP(from=Q.VEC)
+FE    FINISH()

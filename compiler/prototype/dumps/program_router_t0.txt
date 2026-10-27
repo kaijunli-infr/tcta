@@ -1,0 +1,13 @@
+# E4: router, token 0
+# n_instrs=8 loops=[] edge_counts={'LOAD->VEC': (1, 1), 'VEC->STORE': (1, 1)}
+# primed=0 hoisted=0 body_end=0 drained=0 max_fifo_level={'LOAD->VEC': 1, 'VEC->STORE': 1}
+# collapsed={'vtopk': 1, 'unrolled_static_loops': 0} shared_slots=0
+# slots={'row': 'VEC[8]', 'idx': 'VEC[9]'}
+LOAD  LOAD.2D(dst=VEC[8], region=Region(base=1310720, dtype='f32', shape=(1, 32), stride=(128, 4), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=1, cols_valid=32, row0=0, col0=0)
+LOAD  PUSH(to=Q.VEC)
+VEC   POP(from=Q.LOAD)
+VEC   VTOPK(idx=VEC[9], src=VEC[8], k=6, axis=1)
+VEC   PUSH(to=Q.STORE)
+STORE POP(from=Q.VEC)
+STORE STORE.2D(src=VEC[9], region=Region(base=1376256, dtype='i32', shape=(1, 6), stride=(32, 4), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=1, cols_valid=6, row0=0, col0=0, wide=False)
+FE    FINISH()

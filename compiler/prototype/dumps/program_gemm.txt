@@ -1,0 +1,18 @@
+# Gate 1 GEMM family: C[50, 96] = A[50, 100] B[100, 96], partial tiles
+# n_instrs=13 loops=[] edge_counts={'LOAD->MMA': (2, 2), 'MMA->LOAD': (1, 1), 'MMA->STORE': (1, 1)}
+# primed=0 hoisted=0 body_end=0 drained=1 max_fifo_level={'LOAD->MMA': 2, 'MMA->LOAD': 1, 'MMA->STORE': 1}
+# collapsed={'unrolled_static_loops': 0} shared_slots=0
+# slots={'A_s': 'INP[0]', 'B_s': 'WGT[0]', 'C_acc': 'ACC[0]'}
+LOAD  LOAD.2D(dst=INP[0], region=Region(base=0, dtype='bf16', shape=(50, 100), stride=(256, 2), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=50, cols_valid=100, row0=0, col0=0)
+LOAD  PUSH(to=Q.MMA)
+LOAD  LOAD.2D(dst=WGT[0], region=Region(base=65536, dtype='bf16', shape=(100, 96), stride=(256, 2), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=100, cols_valid=96, row0=0, col0=0)
+LOAD  PUSH(to=Q.MMA)
+MMA   POP(from=Q.LOAD)
+MMA   POP(from=Q.LOAD)
+MMA   MMA(acc=ACC[0], a=INP[0], b=WGT[0], accumulate=False, wide=False, row0=0)
+MMA   PUSH(to=Q.LOAD)
+MMA   PUSH(to=Q.STORE)
+STORE POP(from=Q.MMA)
+STORE STORE.2D(src=ACC[0], region=Region(base=131072, dtype='f32', shape=(50, 96), stride=(384, 4), scale_t=1.0, scales_base=None, scales_stride=0), rows_valid=50, cols_valid=96, row0=0, col0=0, wide=False)
+LOAD  POP(from=Q.MMA)
+FE    FINISH()
