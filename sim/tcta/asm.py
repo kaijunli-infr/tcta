@@ -14,7 +14,15 @@ by queue at run time (ISA §1).
 """
 from __future__ import annotations
 
+import struct
+
 from .isa import QUEUE_OF, SP, Instr, Q, Region, TRef
+
+
+def _f32(x: float) -> float:
+    """Immediates are IEEE binary32 (ISA §12); the simulator has always applied them as float32, so rounding at
+    emission changes no result and makes the Program the canonical form the binary encoding round-trips."""
+    return struct.unpack("<f", struct.pack("<f", x))[0]
 
 
 def INP(i): return TRef(SP.INP, i)
@@ -30,6 +38,7 @@ class Program:
 
     def _emit(self, op: str, queue: Q | None = None, incr: dict | None = None, **args) -> Instr:
         q = queue or QUEUE_OF[op]
+        args = {k: (_f32(v) if isinstance(v, float) else v) for k, v in args.items()}
         ins = Instr(op, q, args, pc=len(self.instrs), incr=incr or {})
         self.instrs.append(ins)
         return ins
@@ -85,7 +94,11 @@ class Program:
         return self._emit("VCVT", **a)
     def vcopy(self, dst, src): return self._emit("VCOPY", dst=dst, src=src)
     def vmask(self, acc, kind, q_off=0, k_off=0, width=None, vec=None):
-        return self._emit("VMASK", acc=acc, kind=kind, q_off=q_off, k_off=k_off, width=width, vec=vec)
+        """kind in {causal, band (width), tile (vec)}; absent optionals are omitted (canonical form, §12)."""
+        a = dict(acc=acc, kind=kind, q_off=q_off, k_off=k_off)
+        if width is not None: a["width"] = width
+        if vec is not None: a["vec"] = vec
+        return self._emit("VMASK", **a)
     def vexp2(self, t, vec=None): return self._emit("VEXP2", t=t, **({"vec": vec} if vec is not None else {}))
     def vexp2_sum(self, t, dst, vec=None):
         return self._emit("VEXP2.SUM", t=t, dst=dst, **({"vec": vec} if vec is not None else {}))

@@ -1,6 +1,6 @@
-# Tile-Centric Tensor Accelerator — ISA Specification v0.1.4 (Gate 1 freeze candidate)
+# Tile-Centric Tensor Accelerator — ISA Specification v0.1.5 (Gate 1 frozen)
 
-Status: Gate 1 freeze candidate. Date: 2026-10-27. v0.1.3 (after the MLA/KDA prototypes, `docs/gate1-report.md`) adds the ACC→WGT/INP move, `VCOPY`, a multiplicative mask mode and ACC-resident masks for `MMA.MASKED`, and row-offset writes into STATE/ACC. v0.1.4 (after the phase-5 cycle model) changes only §11: FIFO 8, INP 5, Little's-law ring depths, request striping, and cores. v0.1.1 added `LOOP r, step`, an ACC operand for `VGATE`, and the `i32` store qualifier (MoE prototype); v0.1.2 adds per-level loop increments, the LOAD↔STORE edges, f32 gathers into ACC, and the free-sync issue rule (persistent-MoE prototype). See §15.
+Status: **Gate 1 frozen** (ISA semantics v0.1.3; descriptor v0.1.5). Date: 2026-10-27. Changes from here need a numbered erratum in §16. v0.1.3 (after the MLA/KDA prototypes, `docs/gate1-report.md`) adds the ACC→WGT/INP move, `VCOPY`, a multiplicative mask mode and ACC-resident masks for `MMA.MASKED`, and row-offset writes into STATE/ACC. v0.1.4 (after the phase-5 cycle model) changes only §11: FIFO 8, INP 5, Little's-law ring depths, request striping, and cores. v0.1.5 (after the phase-6 sweeps) fixes the config-C descriptor as 4 cores × one 64×64 array, adds the arbiter policy, SFU lanes and the gather window, and freezes Gate 1. v0.1.1 added `LOOP r, step`, an ACC operand for `VGATE`, and the `i32` store qualifier (MoE prototype); v0.1.2 adds per-level loop increments, the LOAD↔STORE edges, f32 gathers into ACC, and the free-sync issue rule (persistent-MoE prototype). See §15.
 Owner: ISA. Consumers: functional simulator, cycle model, compiler (tensorize + token insertion), RTL.
 
 This document defines instruction semantics, scratchpad names, data types and the synchronization model. It does not define latency, bandwidth, bank counts, queue depths or encodings beyond what the compiler must know. Those belong to the microarchitecture and are runtime-discoverable parameters (§11).
@@ -341,13 +341,15 @@ The compiler reads these from a device descriptor; the ISA does not fix them. Va
 
 | Parameter | v1 KV260 | 22FDX config C (model) |
 |---|---|---|
-| Cores (independent 5-queue instruction streams sharing the DMA channels) | 1 | 4 (one 64×64 array each; see §11.2) |
+| Cores (independent 5-queue instruction streams sharing the DMA channels) | 1 | **4 × one 64×64 array** (decided in phase 6: 2.1× MoE, 2.9× MLA over one core with a 4-array unit on the same silicon) |
+| DMA arbiter across cores | — | round-robin grant among cores with pending requests (arrival order has a convoy mode on lock-step programs, phase 6 finding 2) |
+| SFU lanes per core | 4 | **16** (MoE tile at the ring knee is `VSIGMOID`-bound at 8) |
+| `LOAD.IDX` rows / bursts in flight | 16 | **512** (256 binds on 16 % of bursts at 4 cores) |
 | `T_M, T_K, T_N, T_V, T_VR, T_S` | 64, 128, 128, 64, 512, 128 | same |
 | Slots per core: INP / WGT / ACC / VEC / STATE | 2 / 4 / 2 + 1 wide / 16 / 1 | 5 / **32** / 8 + 2 wide / 64 / 2 |
 | FIFO depth per edge | **8** | **8** |
 | DMA channels (read / write), shared by all cores | 1 / 1 | 8 / 2 |
 | Request striping (`request_channels`) | 1 | 2 |
-| `LOAD.IDX` rows in flight | 16 | 256 |
 | Front-end registers | 16 | 16 |
 | `T_DEADLOCK` | 10⁶ | 10⁷ |
 | Chips (COMM) | 2 (emulated) | N (simulated) |
@@ -363,24 +365,72 @@ d \;\ge\; \frac{\text{BW}\cdot\text{latency}}{b} + 2
 
 For 8 KB WGT tiles at config C that is ≥ 12 slots per stream, which is why the WGT slot count above is 32 (two streams, headroom) and not 16. The scratchpad cost is negligible (256 KB of a 16 MB array); the phase-5 result that one program holds the channels at 13–18 % of peak was a 3-deep ring, not a property of the queue model.
 
+### 11.1a Compiler obligations that follow from the descriptor
+
+- A ring of depth `d` whose slots each carry `r` release tokens needs an MMA→LOAD FIFO of at least `r·(d − 1)`; the compiler checks the static level against the descriptor when it picks a ring (phase 6 finding 4).
+- Rings are per loop: a ring deeper than its loop's trip count issues everything up front and restarts at the next outer iteration. To reach a Little's-law depth the compiler flattens the streams it pipelines (e.g. `[W1 | W3]` as one 16-tile stream), which is a program-shape decision, not a slot count (finding 5).
+
 ### 11.2 Cores
 
-A core is one instruction stream with its own five queues, scratchpads and token FIFOs. Cores share the DMA channels through an arbiter and nothing else; there is no inter-core token edge in v1 (cross-core dependencies go through DRAM or, in v2, through COMM). A chip with `c` cores runs `c` independent programs, which is the second lever on bytes in flight and the natural unit for expert parallelism within a chip (each core streams different experts). Config C is modelled as 4 cores because its four arrays were already independent in the phase-5 timing model; whether they are 4 cores or one core with a 4-array MMA unit is decided by the phase-6 sweep.
+A core is one instruction stream with its own five queues, scratchpads and token FIFOs. Cores share the DMA channels through an arbiter and nothing else; there is no inter-core token edge in v1 (cross-core dependencies go through DRAM or, in v2, through COMM). A chip with `c` cores runs `c` independent programs, which is the second lever on bytes in flight and the natural unit for expert parallelism within a chip (each core streams different experts). Phase 6 decided config C as 4 cores × one array: decode tiles are serial chains (softmax, accumulation, SFU) that one in-order stream cannot spread over four arrays, while four streams hide each other's chains against the channels. η_bw for the MoE decode tile moved 0.146 → 0.644 (two thirds from cores, a quarter from the ring, the rest from striping/broadcast/FIFO); Module 0 replica size 255 → 58 chips, $0.249 → $0.096 per Mtoken, within 10 % of the original planning placeholders.
 
-## 12. Encoding sketch (non-normative)
+## 12. Encoding (normative since v0.1.5; `sim/tcta/encode.py` is the reference implementation)
 
-128-bit instruction words. The front end needs only: queue id (3 b), opcode (6 b), and whether any field is loop-variant. The rest is queue-private.
+The instruction stream is a byte string the host writes once per program: a 32-byte header, a descriptor table, then 128-bit instruction words. Everything is little-endian. `encode(instrs) -> bytes` and `decode(bytes) -> instrs` in `sim/tcta/encode.py` round-trip every program the compiler emits (`tests/test_encode.py`), and the RTL decodes exactly this stream; the Python side is the single source of the encoding.
 
 ```
-[127:125] queue   [124:119] opcode   [118:112] qualifier   [111:96] flags (accumulate, wide, inplace, rows_valid/cols_valid class)
-[95:64]   operand A (scratchpad 3 b | slot 8 b | loop-variant 1 b | reg-indirect 1 b | ...)
-[63:32]   operand B / index tile / mask
-[31:0]    immediate: nrows, row_bytes, k, count, or DRAM descriptor id
+header (32 B)   "TCTA", u8 version = 1, u8 reserved, u16 n_desc, u32 n_words, u32 n_instrs, 16 B reserved
+descriptors     n_desc × 48 B
+words           n_words × 16 B: one instruction word, then its 0–3 extension words
 ```
 
-DRAM region descriptors (`region`) live in a 64-entry descriptor table written by the host; instructions reference them by id. Loop-variant fields add `stride_i` from a per-loop increment table.
+**Descriptor table.** A `Region` (§3) is one 48-byte entry: `u64 base`, `u64 scales_base` (all ones = none), `u32 stride[3]`, `u32 shape[3]`, `f32 scale_t`, `u8 dtype` (`bf16` 0, `f32` 1, `i32` 2, `f8.t` 3, `f8.b32` 4, `f4.b32` 5, `f4.r16` 6), `u8 ndim` (1–3), `u16 scales_stride`. Instructions reference entries by an 8-bit id (256 entries; the largest program to date, persistent MoE, uses 73); equal regions share an entry. Loop-variant base addresses (§6) are applied by the front end to the referenced entry's `base` / `scales_base`, never by rewriting the table.
 
----
+**Instruction word.**
+
+```
+[127:125] queue (LOAD 0, MMA 1, VEC 2, STORE 3, COMM 4, FE 5)
+[124:119] opcode (table below; 63 = extension word)
+[118:112] qualifier (per opcode: PUSH/POP partner queue, VGATE op, VMASK kind, MMA.MASKED mask_mode, LOOP form)
+[111:96]  flags: 0 accumulate, 1 wide, 2 inplace, 3 to_bf16 given, 4 to_bf16, 5 imm present, 6 vec present,
+          7 val present, 8 base_reg present, 9 width present, [15:14] number of extension words that follow
+[95:80] A   [79:64] B   [63:48] C   [47:32] D      16-bit fields
+[31:0]  imm                                          32-bit field, or two 16-bit halves (hi | lo)
+```
+
+A tile reference is 16 bits: `[15:12]` scratchpad (INP 0, WGT 1, ACC 2, VEC 3, STATE 4), `[11:0]` slot. A register is a 16-bit field. Immediates are IEEE binary32; the assembler rounds at emission, and the simulator has always applied immediates as float32, so no result changes. The front end needs only queue, opcode and the extension-word count; the rest is queue-private.
+
+| opcode | # | A | B | C | D | imm | qualifier / flags |
+|---|---|---|---|---|---|---|---|
+| `PUSH` / `POP` | 0 / 1 | | | | | | qualifier = partner queue |
+| `LOAD.2D` / `LOAD.3D` | 2 / 3 | dst | B[7:0] desc | row0 | col0 | rows_valid ‖ cols_valid | |
+| `LOAD.IDX` | 4 | dst | B[7:0] desc, B[15:8] nrows | idx | col0 | row_bytes ‖ cols_valid | |
+| `STORE.2D` | 5 | src | B[7:0] desc | row0 | col0 | rows_valid ‖ cols_valid | wide |
+| `STORE.IDX` | 6 | src | B[7:0] desc, B[15:8] nrows | idx | | cols_valid (lo) | |
+| `MMA` | 7 | acc | a | b | row0 | | accumulate, wide |
+| `MMA.T` | 8 | acc | a | b | | | accumulate |
+| `MMA.MASKED` | 9 | acc | a | b | mask | row0 (lo) | accumulate; qualifier mask_mode (add 0, mul 1) |
+| `VROWMAX` / `VROWSUM` / `VCOPY` | 10 / 11 / 20 | dst | src | | | | |
+| `VSUB` / `VMUL` / `VADD` / `VMAX` | 12 / 13 / 14 / 15 | src | vec (flag 6) | | | f32 imm (flag 5) | one of vec / imm |
+| `VNEG` | 16 | src | | | | | |
+| `VSCALE_ACC` | 17 | acc | vec | | | | wide |
+| `VGATE` | 18 | acc | vec | | | | qualifier op (mul 0, add 1, decay 2) |
+| `VCVT` | 19 | dst | src | | row0 | | inplace; to_bf16 (flags 3, 4) |
+| `VMASK` | 21 | acc | vec (flag 6) | width (flag 9) | | q_off ‖ k_off (signed 16) | qualifier kind (causal 0, band 1, tile 2) |
+| `VEXP2` | 22 | t | vec (flag 6) | | | | |
+| `VEXP2.SUM` | 23 | t | dst | vec (flag 6) | | | |
+| `VRCP` / `VLOG2` / `VSIGMOID` | 24 / 25 / 26 | t | | | | | |
+| `VFILL` | 27 | dst | | rows_valid | cols_valid | f32 imm | (the host-array form has no encoding) |
+| `VTOPK` | 28 | idx | src | val (flag 7) | base_reg (flag 8) | k ‖ axis | |
+| `VCOUNT` | 29 | r | idx | | | u32 bound | |
+| `VSEL` | 30 | dst | a | b | mask | | |
+| `SEND` / `RECV` | 31 / 32 | src / dst | | | | chip ‖ tag | |
+| `RECV.ANY` | 33 | dst | | | | tag (lo) | |
+| `LOOP` | 34 | r (form r) | | step (form r) | | u32 n (form n) | qualifier form (n 0, r 1) |
+| `ENDLOOP` / `FINISH` | 35 / 36 | | | | | | |
+| `SETSCALE` / `SETBASE` / `SETMASK` | 37 / 38 / 39 | r | | | | s32 imm | |
+
+**Extension words (loop-variant fields, §6).** An instruction with `incr` entries is followed by ⌈entries / 2⌉ words with the same queue, opcode 63 and qualifier = entry count; entry 0 at `[95:48]`, entry 1 at `[47:0]`, each `[47:46]` kind (0 add to the field, 1 add to a tile reference's slot, 2 rotate the slot by i mod step), `[45:40]` field id (`region.base` 0, `region.scales_base` 1, `col0` 2, `row0` 3, `nrows` 4, `rows_valid` 5, `cols_valid` 6, `q_off` 7, `k_off` 8, then the tile-reference and immediate argument names in the order of `encode.INCR_FIELDS`), `[39:36]` loop level counted from the innermost (0) outward, `[31:0]` signed step. At most three extension words (six loop-variant fields) per instruction. The front end applies `field += i · step` for the current iteration index `i` of the addressed level when it dispatches the instruction; a level that is not active is ignored, as in the simulator.
 
 ## 13. Reserved for v2
 
@@ -403,6 +453,10 @@ Recorded here so the freeze reflects them; details in `docs/tilelang-cutoff-verd
 - The expert loop had to be unrolled (8,025 instructions for 32 experts) because loop-variant operands were innermost-only; fixed in v0.1.2 by per-level increments.
 - KDA (phase 4): with LOAD as the only writer of WGT, every product of two device-computed matrices cost a STORE→DRAM→LOAD round trip (13 per chunk); fixed in v0.1.3 by `VCVT dst=WGT/INP`. The additive `MMA.MASKED` was the wrong primitive for the delta rule (needs 0, not −inf); fixed by the `mul` mode. A 128-row state did not fit the 64-row write path; fixed by `row0`. Plain BF16 operands miss the KDA tolerance by 5%; the hi/lo split costs +35% MMAs and is left to the compiler's numerics budget, with a BF16×2 array mode as the v0.2 hardware alternative.
 - Gate 1 closes with five kernel families (GEMM, FA/GQA, MLA, KDA, MoE+combine) through TileLang → #19 → ISA → simulator; the remaining questions (ring depths, FIFO depths, gather cost, VEC/SFU sizing, DRAM round-trip latency) are the cycle model's (`docs/gate1-report.md` §4).
+
+## 16. Errata (post-freeze)
+
+None yet.
 
 ## 14. Open issues for v0.2
 
