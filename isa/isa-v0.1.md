@@ -456,7 +456,9 @@ Recorded here so the freeze reflects them; details in `docs/tilelang-cutoff-verd
 
 ## 16. Errata (post-freeze)
 
-None yet.
+| # | Date | Kind | Change |
+|---|---|---|---|
+| E1 | 2026-10-27 | clarification (no semantic change) | §9 leaves accumulation order implementation-defined but deterministic. Phase 7 fixes the reference orders to what the RTL does, and the simulator implements them (`DeviceConfig` docstring): an MMA output element sums its K products sequentially in k order from 0 in FP32, the mask (if any) is applied to that sum, then the previous accumulator value is added once; `VROWSUM` / `VEXP2.SUM` sum with `sum_lanes` (v1: 16) lanes, lane l accumulating columns l, l+L, … sequentially, then a binary tree over the lanes. Immediates are IEEE binary32 (§12). |
 
 ## 14. Open issues for v0.2
 

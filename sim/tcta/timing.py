@@ -1,10 +1,11 @@
 """DeviceTiming: the parameters of the cycle model (phase 5, `docs/phase5-cycle-model-task.md` §2; phase 6 / ISA v0.1.4
 §11: FIFO 8, striping 2, operand broadcast, cores, the Little's-law WGT ring).
 
-Every number here is a planning value, to be calibrated against Verilator later (`docs/cycle-model-report.md`
-§"calibration"). Two descriptors are provided: `KV260` (v1: one 16x16 array at 200 MHz, one LPDDR channel
-path) and `CONFIG_C` (ISA §11 config C: four 64x64 arrays at 1 GHz, 8 read channels). Sweeps use
-`dataclasses.replace(CONFIG_C, vec_lanes=32)` and friends; nothing in `cycle.py` is hard-coded.
+Descriptors: `KV260` (v1: one 16x16 array at 200 MHz, one LPDDR channel path) carries the values measured on the
+phase-7 RTL under Verilator (`rtl_rules=True`, docs/calibration-report.md); `KV260_PLAN` is the phase-5 planning
+descriptor of the same core; `CONFIG_C` (ISA §11 config C: four 64x64 arrays at 1 GHz, 8 read channels) keeps
+planning values. Sweeps use `dataclasses.replace(CONFIG_C, vec_lanes=32)` and friends; nothing in `cycle.py` is
+hard-coded.
 
 Units: one cycle = one clock at `f_mhz`. The cycle model reports cycles and microseconds at that clock.
 """
@@ -69,6 +70,49 @@ class DeviceTiming:
     # ---- COMM link (emulated in v0.1; priced, never exercised by the five families) ----
     link_bytes_per_cycle: int = 32
     link_latency_cycles: int = 2000
+    # ---- v0 RTL rules (phase 7 calibration, `docs/calibration-report.md`). The planning rules above assume a
+    #      streaming DMA (one request, latency once, bytes_per_cycle after), a lane-parallel VEC pipe and a free
+    #      front end; the v0 core (`rtl/`) is row-serial: `rtl_rules` switches the cycle model to its structure
+    #      and the constants below are the values measured on the Verilator trace (never tuned). KV260 carries
+    #      them; KV260_PLAN and CONFIG_C keep the planning rules ----
+    rtl_rules: bool = False
+    #   DMA: a LOAD.2D row costs dram_latency + ceil(row_bytes / bytes_per_cycle) beats + one slice write per 16
+    #   columns + dma_load_row_overhead; a STORE.2D row dma_store_slice_cycles per slice + beats + overhead; per
+    #   instruction the setup/metadata cycles. The next row's fetch does not overlap the current row.
+    dma_load_setup_cycles: int = 5
+    dma_store_setup_cycles: int = 4
+    dma_load_row_overhead: int = 2
+    dma_store_row_overhead: int = 1
+    dma_store_slice_cycles: int = 2
+    #   VEC: one [row, 16-column] slice per operand read per cycle (a column vector of M elements costs M cycles), a
+    #   row-vector operand one read per row, SFU ops sfu_slice_cycles per slice (VEXP2.SUM one more per slice and
+    #   one row write), plus vec_op_overhead_cycles per instruction
+    vec_op_overhead_cycles: int = 6
+    sfu_slice_cycles: int = 6
+    sfu_sum_slice_extra: int = 1
+    #   MMA: blocks start every P = ceil16(max(K, 16)) cycles while the result FIFO (mma_rf_rows) has room for a
+    #   block; a block's result rows appear P + mma_result_latency + i cycles after its start and are written back
+    #   one at a time at mma_wb_row_cycles (+ extras for accumulate / masked; padding rows cost 1). The queue
+    #   issues the next instruction the cycle after the previous one completes (no drain overlap).
+    mma_result_latency: int = 24
+    mma_wb_row_cycles: int = 2
+    mma_wb_acc_extra: int = 2
+    mma_wb_mask_extra: int = 3
+    mma_rf_rows: int = 32
+    #   front end: fe_word_cycles per instruction word (fetch, decode, dispatch; PUSH/POP words fe_sync_word_cycles),
+    #   fe_ext_word_cycles per extension word plus fe_ext_entry_cycles per loop-variant entry and fe_mod_entry_cycles
+    #   per `_mod` entry; LOOP / ENDLOOP loop_overhead_cycles each; LOOP r: vcount_to_loop_latency after the VCOUNT
+    #   completes plus loop_r_count_cycles per iteration of the count (ceil(R / step) by repeated subtraction);
+    #   dispatch stalls while the target queue holds iq_depth dispatched, unissued instructions (0 = unbounded)
+    fe_word_cycles: int = 1
+    fe_sync_word_cycles: int = 0
+    fe_ext_word_cycles: int = 0
+    fe_ext_entry_cycles: int = 0
+    fe_mod_entry_cycles: int = 0
+    loop_r_count_cycles: int = 0
+    iq_depth: int = 0
+    #   tokens: a PUSH fired at cycle t is poppable at t + push_visible_cycles
+    push_visible_cycles: int = 0
 
     # ---- derived ----
     def mma_occupancy(self, M: int, K: int, N: int) -> int:
@@ -98,9 +142,31 @@ class DeviceTiming:
         return cycles / self.f_mhz
 
 
-KV260 = DeviceTiming()
+# The phase-5 planning descriptor of the v1 KV260 core (the numbers of docs/cycle-model-report.md and the phase-6
+# tables): kept for reproducing them
+KV260_PLAN = DeviceTiming(name="v1-kv260-plan")
 
-# Config C after ISA v0.1.4 §11: FIFO 8, request striping 2, operand broadcast, WGT 32 slots (one bank each),
+# The v1 KV260 core as built (rtl/, phase 7): every value below is measured on the Verilator trace
+# (`rtl/test/calibrate.py`, docs/calibration-report.md §2). dram_latency_cycles is the harness's memory model
+# (+MEMLAT, the plan's fixed-latency port assumption), not a measured LPDDR; f_mhz is the plan's clock until the
+# synthesis number replaces it.
+KV260 = DeviceTiming(
+    name="v1-kv260",
+    rtl_rules=True,
+    dram_latency_cycles=24,
+    dma_load_setup_cycles=5, dma_store_setup_cycles=4, dma_load_row_overhead=2, dma_store_row_overhead=1, dma_store_slice_cycles=2,
+    vec_op_overhead_cycles=6, sfu_slice_cycles=6, sfu_sum_slice_extra=1, sfu_fused_sub_sum=True,
+    mma_result_latency=24, mma_wb_row_cycles=2, mma_wb_acc_extra=2, mma_wb_mask_extra=3, mma_rf_rows=32,
+    fe_word_cycles=3, fe_sync_word_cycles=3, fe_ext_word_cycles=2, fe_ext_entry_cycles=1, fe_mod_entry_cycles=1,
+    loop_overhead_cycles=2, vcount_to_loop_latency=1, loop_r_count_cycles=1, iq_depth=16,
+    push_visible_cycles=1,
+    # as built: every scratchpad is one group of 16 column banks (all slots share them) with two read ports and
+    # one write port per bank; a third reader or a second writer waits (rtl/src/scratchpad.sv)
+    banks={SP.INP: 1, SP.WGT: 1, SP.ACC: 1, SP.VEC: 1, SP.STATE: 1},
+    ports_per_bank=(2, 1),
+)
+
+# Config C after ISA v0.1.4 §11 (planning rules, not calibrated): FIFO 8, request striping 2, operand broadcast, WGT 32 slots (one bank each),
 # outstanding window 512 >= a striped gather's demand (one request per cycle x (latency + transfer) ~ 302).
 # One stream with the four 64x64 arrays as one MMA unit (the phase-5 view; the phase-6 core sweep uses
 # CONFIG_C_CORE for the 4-cores x 1-array view of the same silicon).
@@ -130,4 +196,4 @@ CONFIG_C_PHASE5 = DeviceTiming(
        "name": "config-C-phase5", "fifo_depth": 16, "request_channels": 1, "operand_broadcast": False,
        "max_outstanding_rows": 256, "banks": {SP.INP: 8, SP.WGT: 16, SP.ACC: 8, SP.VEC: 4, SP.STATE: 2}})
 
-__all__ = ["DeviceTiming", "KV260", "CONFIG_C", "CONFIG_C_CORE", "CONFIG_C_PHASE5", "Q"]
+__all__ = ["DeviceTiming", "KV260", "KV260_PLAN", "CONFIG_C", "CONFIG_C_CORE", "CONFIG_C_PHASE5", "Q"]

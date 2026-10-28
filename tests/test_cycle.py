@@ -23,7 +23,7 @@ from tcta import ACC, INP, VEC, WGT, DeviceConfig, Machine, Program, Q, Region  
 from tcta import dtypes as dt  # noqa: E402
 from tcta.cycle import CycleDeadlock, CycleMachine  # noqa: E402
 from tcta.isa import SP  # noqa: E402
-from tcta.timing import CONFIG_C, KV260  # noqa: E402
+from tcta.timing import CONFIG_C, KV260, KV260_PLAN  # noqa: E402
 
 rng = np.random.default_rng(0)
 
@@ -59,7 +59,7 @@ def recs(t, op):
 
 
 # ------------------------------------------------------------------ (a)
-@pytest.mark.parametrize("T", [KV260, CONFIG_C])
+@pytest.mark.parametrize("T", [KV260_PLAN, CONFIG_C])
 def test_single_mma_costs_mma_issue_cycles(T):
     m = CycleMachine(timing=T)
     p, A, B, ro = gemm_program(m)
@@ -68,12 +68,12 @@ def test_single_mma_costs_mma_issue_cycles(T):
     (mma,) = recs(m.timing_report, "MMA")
     assert mma.end - mma.start == T.mma_issue_cycles(64, 128, 128)
     assert mma.busy == T.mma_occupancy(64, 128, 128) and mma.macs == 64 * 128 * 128
-    assert mma.info == {"M": 64, "K": 128, "N": 128}
+    assert mma.info == {"M": 64, "K": 128, "N": 128, "acc": False}
 
 
 # ------------------------------------------------------------------ (b)
 def test_two_mmas_pipeline_on_different_banks_serialize_on_the_same():
-    T = replace(KV260, n_arrays=2)                       # ACC banks 4: slots 0 and 4 share bank 0
+    T = replace(KV260_PLAN, n_arrays=2)                       # ACC banks 4: slots 0 and 4 share bank 0
     m = CycleMachine(timing=T)
     p, *_ = gemm_program(m, n_pairs=2, accs=(0, 1))
     m.run(p.instrs)
@@ -90,7 +90,7 @@ def test_two_mmas_pipeline_on_different_banks_serialize_on_the_same():
 
 # ------------------------------------------------------------------ (c)
 def test_token_dependency_load_before_mma():
-    m = CycleMachine(timing=KV260)
+    m = CycleMachine(timing=KV260_PLAN)
     p, *_ = gemm_program(m)
     m.run(p.instrs)
     t = m.timing_report
@@ -100,7 +100,7 @@ def test_token_dependency_load_before_mma():
     assert t.edges["LOAD->MMA"]["pushes"] == 2 and t.edges["LOAD->MMA"]["max_level"] <= 2
 
 
-@pytest.mark.parametrize("T", [KV260, CONFIG_C])
+@pytest.mark.parametrize("T", [KV260_PLAN, CONFIG_C])
 def test_popped_tokens_were_pushed_first_on_every_family(T):
     tilelang = pytest.importorskip("tilelang")
     sys.path.insert(0, os.path.join(HERE, "..", "compiler", "prototype"))
@@ -175,7 +175,7 @@ def test_fifo_depth_blocks_a_producer_that_runs_ahead():
     cfg = DeviceConfig(slots={SP.INP: 4, SP.WGT: 4, SP.ACC: 6, SP.VEC: 16, SP.STATE: 1}, fifo_depth=4)
     blocked, load_end, level = {}, {}, {}
     for depth in (1, 2, 4):
-        T = replace(KV260, fifo_depth={"LOAD->MMA": depth, "default": 4}, banks={SP.INP: 4, SP.WGT: 4, SP.ACC: 8, SP.VEC: 2, SP.STATE: 1})
+        T = replace(KV260_PLAN, fifo_depth={"LOAD->MMA": depth, "default": 4}, banks={SP.INP: 4, SP.WGT: 4, SP.ACC: 8, SP.VEC: 2, SP.STATE: 1})
         m = CycleMachine(timing=T, cfg=cfg)
         p = ring_program(m)
         m.run(p.instrs)
@@ -206,7 +206,7 @@ def test_fa_ring_holds_one_token_whatever_the_fifo_depth():
     prog, _ = tile_tir_to_program(lower_to_tile_tir(build_fa_kernel(), cut="inject_pipeline"), bx=0, by=0, dram=DRAM)
     cycles = {}
     for depth in (1, 4):
-        m = CycleMachine(timing=replace(KV260, fifo_depth={"LOAD->MMA": depth, "default": 4}), dram_bytes=4 << 20)
+        m = CycleMachine(timing=replace(KV260_PLAN, fifo_depth={"LOAD->MMA": depth, "default": 4}), dram_bytes=4 << 20)
         m.dram_write(DRAM["Q"], common.bf16_bytes(d["Q"]).ravel())
         m.dram_write(DRAM["K"], common.bf16_bytes(d["K"][kv]).ravel())
         m.dram_write(DRAM["V"], common.bf16_bytes(d["V"][kv]).ravel())
@@ -221,7 +221,7 @@ def test_fa_ring_holds_one_token_whatever_the_fifo_depth():
 # ------------------------------------------------------------------ (e)
 @pytest.mark.parametrize("mode,requests", [("row", 64), ("burst64", 4 * 64)])
 def test_load_idx_requests(mode, requests):
-    m = CycleMachine(timing=replace(KV260, row_gather_cost=mode))
+    m = CycleMachine(timing=replace(KV260_PLAN, row_gather_cost=mode))
     X = rng.standard_normal((256, 128)); rx = put_bf16(m, 0, X)
     p = Program()
     p.vfill(VEC(8), array=np.arange(64, dtype=np.float32).reshape(1, 64)); p.push(Q.VEC, Q.LOAD); p.pop(Q.LOAD, Q.VEC)
@@ -230,12 +230,12 @@ def test_load_idx_requests(mode, requests):
     m.run(p.instrs)
     (ld,) = recs(m.timing_report, "LOAD.IDX")
     assert ld.requests == requests and ld.bytes == 64 * 256
-    assert ld.busy == 64 * 256 // KV260.bytes_per_cycle_per_channel     # channel transfer cycles are the same
-    assert ld.end - ld.start >= KV260.dram_latency_cycles + ld.busy
+    assert ld.busy == 64 * 256 // KV260_PLAN.bytes_per_cycle_per_channel     # channel transfer cycles are the same
+    assert ld.end - ld.start >= KV260_PLAN.dram_latency_cycles + ld.busy
 
 
 def test_skipped_rows_cost_nothing():
-    m = CycleMachine(timing=KV260)
+    m = CycleMachine(timing=KV260_PLAN)
     X = rng.standard_normal((256, 128)); rx = put_bf16(m, 0, X)
     idx = np.arange(64, dtype=np.float32); idx[32:] = -1
     p = Program()
@@ -271,7 +271,7 @@ def test_fifo_deadlock_is_reported_not_silent():
     """A producer forced to push 4 tokens before its consumer can pop at depth 1, with the consumer's first pop
     behind a token the producer cannot push: the timing pass raises CycleDeadlock naming the FIFO."""
     cfg = DeviceConfig(slots={SP.INP: 4, SP.WGT: 4, SP.ACC: 6, SP.VEC: 16, SP.STATE: 1}, fifo_depth=4)
-    m = CycleMachine(timing=replace(KV260, fifo_depth={"LOAD->MMA": 1, "VEC->LOAD": 4, "default": 4}), cfg=cfg)
+    m = CycleMachine(timing=replace(KV260_PLAN, fifo_depth={"LOAD->MMA": 1, "VEC->LOAD": 4, "default": 4}), cfg=cfg)
     A = rng.standard_normal((64, 128)); B = rng.standard_normal((128, 128))
     ra = put_bf16(m, 0, A); rb = put_bf16(m, 1 << 16, B)
     p = Program()
@@ -323,7 +323,7 @@ def shared_a_program(m):
 
 @pytest.mark.parametrize("broadcast", [False, True])
 def test_operand_broadcast_lets_two_arrays_read_one_a_tile(broadcast):
-    T = replace(KV260, n_arrays=2, operand_broadcast=broadcast)
+    T = replace(KV260_PLAN, n_arrays=2, operand_broadcast=broadcast)
     m = CycleMachine(timing=T)
     m.run(shared_a_program(m).instrs)
     a, b = recs(m.timing_report, "MMA")
@@ -387,3 +387,40 @@ def test_multicore_saturated_channels_scale_with_cores_and_wait_at_the_arbiter()
     assert one.channel_util > 0.8                                                    # one program saturates the 8 channels
     assert two.cycles >= 1.7 * (one.cycles - CONFIG_C_CORE.dram_latency_cycles)      # ~2x the transfer time
     assert all(w > 0 for w in two.arbiter_wait) and max(two.arbiter_wait) <= 1.5 * min(two.arbiter_wait)   # both wait, fairly
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# phase 7 (J5): the calibrated KV260 descriptor reproduces the Verilator measurements (rtl/test/calibrate.py,
+# docs/calibration-report.md): row-serial DMA, the array's block schedule, the slice-serial VEC pipe, the front end
+# ---------------------------------------------------------------------------------------------------------------
+
+def test_kv260_calibrated_reproduces_rtl_durations():
+    m = CycleMachine(timing=KV260)
+    A = np.random.default_rng(1).standard_normal((64, 128)).astype(np.float32)
+    B = np.random.default_rng(2).standard_normal((128, 128)).astype(np.float32)
+    m.dram_write(0, (dt.to_bf16(A).view(np.uint32) >> 16).astype(np.uint16))
+    m.dram_write(1 << 16, (dt.to_bf16(B).view(np.uint32) >> 16).astype(np.uint16))
+    ra = Region(0, "bf16", (64, 128), (256, 2)); rb = Region(1 << 16, "bf16", (128, 128), (256, 2))
+    ro = Region(1 << 20, "f32", (64, 128), (512, 4))
+    p = Program()
+    p.load2d(INP(0), ra, 64, 128); p.push(Q.LOAD, Q.MMA)
+    p.load2d(WGT(0), rb, 128, 128); p.push(Q.LOAD, Q.MMA)
+    p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD)
+    p.mma(ACC(0), INP(0), WGT(0)); p.mma(ACC(0), INP(0), WGT(0), accumulate=True); p.push(Q.MMA, Q.VEC)
+    p.pop(Q.VEC, Q.MMA); p.vrowmax(VEC(0), ACC(0)); p.vsub(ACC(0), vec=VEC(0)); p.push(Q.VEC, Q.STORE)
+    p.pop(Q.STORE, Q.VEC); p.store2d(ACC(0), ro, 64, 128)
+    p.finish()
+    st = m.run(p.instrs)
+    assert st["ok"]
+    t = m.timing_report
+    dur = [(r.op, r.end - r.start) for r in sorted(t.recs, key=lambda r: r.start)]
+    ops = [d[0] for d in dur]
+    assert ops == ["LOAD.2D", "LOAD.2D", "MMA", "MMA", "VROWMAX", "VSUB", "STORE.2D"]
+    # measured on the RTL trace (rtl/test/vectors/{mma,vec}/rtl_trace.txt): LOAD 64x128 bf16 3205, 128x128 6405,
+    # MMA 64x128x128 4152 / accumulate 4184, VROWMAX 64x128 519, VSUB with a column vector 582, STORE 64x128 f32 3140
+    assert dur[0][1] == 3205 and dur[1][1] == 6405
+    assert dur[2][1] == 4152 and abs(dur[3][1] - 4184) <= 2
+    assert abs(dur[4][1] - 519) <= 1 and dur[5][1] == 582
+    assert dur[6][1] == 3140
+    # the front end: 3 cycles per word (PUSH / POP words too), the first LOAD dispatched at cycle 3
+    assert t.recs[0].dispatch == 3

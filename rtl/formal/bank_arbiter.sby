@@ -1,0 +1,20 @@
+# The scratchpad's two-port bank arbiter (scratchpad.sv): never two writers in a cycle, at most one port per
+# client, the highest-priority requester always granted, two pure reads at the top both granted.
+# Memory is abstracted by Yosys (the banks are left as RAM cells; the properties are on the grant logic).
+[options]
+mode bmc
+depth 24
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal -sv tcta_isa_pkg.sv tcta_pkg.sv scratchpad.sv
+chparam -set WORDS 16 scratchpad
+prep -top scratchpad
+memory_map
+
+[files]
+../src/tcta_isa_pkg.sv
+../src/tcta_pkg.sv
+../src/scratchpad.sv

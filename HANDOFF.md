@@ -1,136 +1,144 @@
-# Handoff: TileLang cut-off task, phases 1–6 complete (2026-10-27)
+# Handoff: TileLang cut-off task, phases 1–7 (2026-10-28)
 
 For the session steering `docs/tilelang-lowering-cutoff-task.md`, its
 addendum, `docs/tilelang-phase2-moe-task.md`, `docs/tilelang-phase3-task.md`,
-`docs/tilelang-phase4-task.md`, `docs/phase5-cycle-model-task.md` and
-`docs/phase6-mlp-task.md`. All deliverables of the six phases exist; the whole
-repo is green on the v0.1.4 simulator (`pytest tests -q`: **84 passed**). The
-ISA changed only where the main session sent deltas (v0.1.4 = §11, the device
-descriptor); the simulator gained the phase-3 trace list (approved), the
-phase-5 cycle model (`sim/tcta/timing.py`, `sim/tcta/cycle.py`) and the
-phase-6 multi-core replay in the same two modules; `machine.py` is untouched
-beyond the trace list. **This repo is canonical** (process change, phase 6):
-the main session sends spec and doc deltas only, no `sim/` copies. Remote:
-`github.com/kaijunli-infr/tcta` (private).
+`docs/tilelang-phase4-task.md`, `docs/phase5-cycle-model-task.md`,
+`docs/phase6-mlp-task.md` and `docs/phase7-rtl-core-task.md`. All
+deliverables of phases 1–6 exist and phase 7's J1–J5 are done; the whole repo
+is green (`pytest tests -q`: **92 passed**; `make -C rtl/test all`: **9/9
+PASS**, lint clean). The ISA changed only where the main session sent deltas
+(v0.1.5 = Gate 1 frozen, §12 normative) plus erratum E1 (§16, the MMA k-sum
+and row-sum orders, which the simulator now implements). **This repo is
+canonical**: the main session sends spec and doc deltas only, no `sim/`
+copies. Remote: `github.com/kaijunli-infr/tcta` (private).
 
 **Phase 1: PASS. Phase 2: PASS. Phase 3: PASS. Phase 4: PASS-WITH-CAVEATS
-(closed by v0.1.3, Gate 1 closed). Phase 5: PASS. Phase 6: PASS.** The
-phase-6 verdict section and `docs/phase6-mlp-report.md` §7 carry eight
-findings for the main session; the two that matter most are the descriptor
-decision (config C = 4 cores × one 64×64 array, 2.1–2.9× the 4-array single
-core on the same silicon) and that the recommended configuration lifts the
-MoE tile's η_bw from 0.146 to 0.644, which moves Module 0 from 255 to 58
-chips per replica ($0.249 → $0.096 per Mtoken), within 10 % of the planning
-placeholders.
+(closed by v0.1.3, Gate 1 closed). Phase 5: PASS. Phase 6: PASS. Phase 7:
+PASS-WITH-CAVEATS** — GEMM bit-exact and FA within §9 on the RTL under
+Verilator with the compiler's programs unchanged, the three negative tests
+fault with the simulator's codes, the cycle model is within 0.3 % of the RTL
+after calibration (but only with rule changes: the v0 core is row-serial in
+its DMA and VEC vectors, report below); the SymbiYosys proof and the
+synthesis numbers are pending a working Yosys on this machine.
 
-## Phase 6 in one paragraph
+## Phase 7 in one paragraph
 
-ISA v0.1.4 §11 applied (FIFO 8, INP 5, WGT 32, striping 2, A-operand
-broadcast, cores). `DeviceTiming` gained `request_channels`,
-`operand_broadcast`, `cores`; `CONFIG_C` carries §11 as one stream with a
-4-array MMA unit, `CONFIG_C_CORE` the same chip as four one-array cores,
-`CONFIG_C_PHASE5` the phase-5 descriptor (so `model/sweeps.py` still
-reproduces phase 5). `cycle.run_multicore` replays c programs on c cores
-against the shared channels through an arrival-order arbiter (ties rotate),
-reports per-core `stall_arbiter`, and checks every core's functional result.
-I1: the MoE ring knee is 12 (6481 cycles per tile, η_bw 0.304; ring 16 is
-worse) and the MLA K-ring knee 10 (2177, 0.155); the knee is the tile's own
-serial chains (SFU 3331 cycles, 6144 array-cycles of accumulation per MoE
-tile), not Little's law; rings deeper than a loop's trip count are not rings,
-so `[W1|W3]` is streamed as one 16-tile loop (`flat_w13`). I3: 4 cores × 8
-experts give 3063 cycles per tile chip-wide, η_bw 0.644, η_mfu 0.502,
-channels 52 % busy, per-core completion within 1.4 %; MLA copies 758 per KV
-tile, η_bw 0.446, with an arrival-order convoy (+4.8 % per core index). I4:
-striping 2 is −5.7 % at 1–2 cores and 0 at 4; 8-way costs 27 %. I5: Module 0
-reads `module0_recommended` by default. I6: 4 cores × 1 array, INP 5, WGT 32,
-FIFO 8, striping 2.
+One core of ISA v0.1.5 in SystemVerilog (`rtl/src/`, 20 modules: front end
+with a 4-deep loop stack and extension-word apply, five in-order queues over
+token FIFOs, five column-banked scratchpads with a two-port seven-client
+arbiter, row-at-a-time LOAD/STORE engines with dequant on ingress, a 16×16
+output-stationary systolic array with a result FIFO and a mask/accumulate
+writeback, a slice-serial VEC pipe with a 4-lane SFU, a debug token checker),
+fed by the §12 binary stream (`sim/tcta/encode.py`) and run under Verilator
+5.052 (`rtl/test/`) against the simulator's own DRAM images and expectations.
+Nine programs: dma_copy, mma (plain / accumulate / A-from-ACC), vec, gemm, fa,
+loop (front-end micro-test) and the three negative tests of `test_sim.py`.
+Calibration (`rtl/test/calibrate.py`, `docs/calibration-report.md`): the
+measured core differs from the plan in structure — DMA row-serial (5.1 B/cycle
+on a BF16 tile, plan 16), column vectors M cycles (plan ⌈M/16⌉), SFU 6 cycles
+per slice (plan 4) but VEXP2.SUM fused, front end 3 cycles per word with
+PUSH/POP words counted, 16-deep instruction queues, PUSH visible one cycle
+later, MMA drain 56/88 (plan 8), accumulate writeback-bound at K ≤ 64 — and
+`tcta.timing.KV260` now carries that structure (`rtl_rules`) with every
+constant measured; `KV260_PLAN` keeps the planning descriptor for the
+phase-5/6 tables. Formal properties (token FIFO, bank arbiter) are written
+and pass as runtime assertions on all nine programs; the BMC itself and the
+Yosys/Vivado synthesis need the toolchain (below).
 
 ## What to read first
 
-1. `docs/phase6-mlp-report.md`: §0 the result, §2 ring sweep, §4 cores, §5
-   striping, §6 Module 0, §7 the descriptor decision and the lever-by-lever
-   η_bw argument, findings.
-2. `docs/tilelang-cutoff-verdict.md`, Phase 6 section: verdict, the answers in
-   one table, findings for the main session, calibration additions.
-3. `docs/cycle-model-report.md`: the timing model (§1, with the phase-6 rules
-   for striping, broadcast, cores and the arbiter at the end), phase-5 sweeps
-   and calibration list.
-4. `model/mlp_results.md` (phase-6 tables), `model/cycle_results.md` (phase-5
-   tables), `model/README.md` (the η rows before and after).
-5. `compiler/prototype/PINNED.md` "Phase 6 notes": rings vs trip counts, the
-   expert-subset programs, the K-ring span, FIFO ≥ r·(d − 1), the multi-core
-   rules.
+1. `docs/tilelang-cutoff-verdict.md`, Phase 7 section: verdict per §3, the
+   numbers in one table, eight findings, the calibration pointer.
+2. `docs/calibration-report.md`: what was measured parameter by parameter
+   (§1), what still differs (§2), what it says about the plan (§4).
+3. `rtl/README.md` (the core as built, parameters, numerics) and
+   `rtl/test/README.md` (programs, vector format, the negative-test mapping).
+4. Phase 6: `docs/phase6-mlp-report.md`, the Phase 6 verdict section,
+   `docs/cycle-model-report.md` (the planning rules), `model/mlp_results.md`,
+   `compiler/prototype/PINNED.md` (phase 6 and 7 notes).
 
-## Deliverables (phase 6; earlier phases unchanged, see the verdict)
+## Deliverables (phase 7; earlier phases unchanged, see the verdict)
 
 | # | Path | Status |
 |---|---|---|
-| §0 | `isa/isa-v0.1.md` (v0.1.4 §11 as received), `docs/phase6-mlp-task.md`; `sim/tcta/isa.py` (`DEVICE_CONFIG_C`, FIFO 8); `sim/tcta/timing.py` (`CONFIG_C`, `CONFIG_C_CORE`, `CONFIG_C_PHASE5`) | done |
-| I1 | `moe_kernel.build_moe_persistent_kernel(num_stages, flat_w13)`, `mla_kernel.build_mla_kernel(inp_slots=5, kv_unroll)`; `model/sweeps_mlp.py --only ring`; dumps `program_moe_flat_ring12.txt`, `program_mla_kv2.txt` | done |
-| I2 | `cycle.run_multicore`, `MultiTiming`, `_Core`, arbiter, `stall_arbiter[_gather]`, `gather_bound`; `tests/test_cycle.py` (+4) | 20 passed |
-| I3 | `build_moe_persistent_kernel(expert_base, n_experts)`, `sweeps.fam_moe(..., expert_base, n_experts)`; `sweeps_mlp.py --only cores` | done |
-| I4 | `sweeps_mlp.py --only striping` | done |
-| I5 | keys `module0_recommended`, `module0_1core` in `model/cycle_results.json`; `module0.py` default key + fallback; `model/README.md` | done |
-| I6 | `docs/phase6-mlp-report.md`; verdict Phase 6 section | done |
-| + | `model/sweeps.py` pinned to `CONFIG_C_PHASE5` and merging into the results file; `docs/cycle-model-report.md` §1 phase-6 rules; `sim/README.md` | done |
+| J1 | `sim/tcta/encode.py`, ISA §12, `tests/test_encode.py`; `rtl/gen_pkg.py` → `rtl/src/tcta_isa_pkg.sv` | done (c771593) |
+| J2 | `rtl/src/*.sv`, `rtl/src/fp/*.sv`, `rtl/test/fp/` (FP library vs NumPy: 0 mismatches / 200 000) | done, lint clean |
+| J3 | `rtl/test/{tb_top.sv,tb_main.cpp,Makefile,compare.py,gen_vectors.py}`, `vectors/<program>/` | done |
+| J4 | GEMM bit-exact, FA within §9 (4.03e-3 ≤ 7.81e-3), negative tests TOKEN_LEAK / TOKEN_TIMEOUT / UNTOKENED_READ (`TOKEN_CHECK=1`) | PASS |
+| J5 | `sim/tcta/timing.py` (`KV260` measured, `KV260_PLAN`), `sim/tcta/cycle.py` (`rtl_rules`), `rtl/test/calibrate.py`, `docs/calibration-report.md`, `tests/test_cycle.py` (+1) | GEMM −0.0 %, FA +0.3 % |
+| J6 | `rtl/formal/{token_fifo,bank_arbiter}.sby`, properties under `ifdef FORMAL`; `make all FORMAL=1` passes | BMC pending toolchain |
+| J7 | verdict Phase 7 section; `rtl/synth/yosys_xck26.ys`, `vivado_ooc.tcl`, `vivado_ooc.xdc` | section done; synthesis pending |
+| E1 | `isa/isa-v0.1.md` §16, `sim/tcta/isa.py` (`sum_lanes`), `sim/tcta/machine.py` (`_mma_sum`, `_row_sum`), `tests/test_sim.py` | done |
 
-## Key numbers (config C, cycles at 1 GHz; phase-5 numbers in the Phase 5 section of the verdict)
+## Key numbers (v1 KV260 core, RTL cycles, 24-cycle harness memory latency)
 
-- Ring sweep, MoE token tile: 13554 (phase 5) → 9974 (§1 descriptor, ring 3)
-  → 8561 (flat `[W1|W3]`, 3) → 7116 (6) → 6481 (12) → 6750 (16); η_bw 0.146 →
-  0.304. MLA KV tile: 3665 → 2772 (K ring 4) → 2177 (10) = 2177 (20, FIFO 36
-  needed).
-- Cores: MoE per tile chip-wide 9314 / 4812 / 3063 on 1 / 2 / 4 one-array
-  cores (η_bw 0.212 / 0.410 / 0.644, η_mfu 0.165 / 0.319 / 0.502, channels
-  17 / 33 / 52 %); the 4-array single core 6481 (0.304 / 0.237). MLA 2561 /
-  1356 / 758 (η_bw 0.132 / 0.249 / 0.446); 4-array single core 2177.
-- Striping × cores (MoE): k = 2 −5.7 % / −5.6 % / +0.4 % at 1 / 2 / 4 cores;
-  k = 8 −4.8 % / +10.5 % / +26.6 %.
-- Module 0: η_bw 0.644 / η_mfu 0.502 → N = 58, $0.096/Mtoken ($0.036 at B*);
-  phase 5 255 / $0.249; 1 core × 4 arrays 122 / $0.146; placeholders 53 /
-  $0.093. 12LP+ with HBM2e: 76 → 21 chips.
+- GEMM 11291 (planning model 5633, calibrated 11286); FA 38543 (27856;
+  38642); dma_copy 4560, mma 29952, vec 22177, loop 814, all within 0.1 %
+  after calibration.
+- LOAD.2D row: 24 + beats + slices + 2 (64×128 BF16 → 3205, 5.1 B/cycle);
+  STORE.2D row: 2·slices + beats + 1 (64×128 f32 → 3140).
+- MMA 64×128×128: 4152 (accumulate 4184) = 32 blocks × 128 + drain 56 (88);
+  FA PV accumulate 64×64×64: 1231 (writeback-bound, +14 % over 1080).
+- VEC: `[64, 128]` op 518; with a column-vector operand 582; `[64, 1]` op
+  70 (134 with a vector operand); VEXP2 `[64, 1]` 389; VEXP2.SUM `[64, 64]`
+  1927 (plan 3072).
+- Front end: 3 cycles per word (PUSH/POP too), extension word 2 + 1 per
+  entry (+1 per `_mod`), LOOP/ENDLOOP 2, LOOP r 1 + ⌈R/step⌉ after VCOUNT.
 
-## Decisions taken while implementing (phase 6)
+## Decisions taken while implementing (phase 7)
 
-- Rings are set by `num_stages`, capped at the pipelined loop's trip count;
-  to reach ring 12 the MoE W13 stream had to be flattened (`flat_w13`), with
-  x resident in 2 INP slots. This is a program-shape change beyond "ring
-  depth" and is recorded as such (report §7 finding 5).
-- The MLA K ring is deepened by spanning `kv_unroll` KV tiles (5 slots each);
-  `u = 1` is byte-identical to the phase-5 form.
-- The ring sweep runs at FIFO 8 and 32 to separate ring effects from FIFO
-  effects; the core and striping sweeps and the Module 0 keys use FIFO 8 (the
-  §1 decision), which costs nothing at the recommended rings.
-- Arbiter: arrival order with a rotating tie-break (the event loop replays
-  all cores' heads in ready-time order). The wait includes queueing behind
-  the core's own requests, so single-core runs report it too.
-- The idle-channel multi-core test uses 8 write channels: with config C's 2
-  the GEMM's 32 KB f32 stores already contend at 2 copies.
-- `MultiTiming.eta_mfu` charges all arrays of the run; `eta_mfu_chip(4)` is
-  used in every table so 1-core and 4-core rows compare.
-- `model/sweeps.py` now runs on `CONFIG_C_PHASE5` and merges into
-  `cycle_results.json`, so the phase-5 tables and keys reproduce and a rerun
-  does not drop the phase-6 keys.
-- `max_outstanding_rows` 512 (not §11's 256): the window already binds on 16 %
-  of gather bursts at 4 cores.
+- SystemVerilog over Chisel (Kevin); both synthesis routes (Kevin).
+- Numerics: erratum E1 fixes the MMA k-sum (sequential from +0, products
+  rounded first, mask, then + old) and the row-sum order (16 lane partials,
+  binary tree) in the ISA and the simulator so that the RTL is bit-exact
+  without an FMA-free re-derivation per op; `f32_max` follows `np.maximum`'s
+  +0 on a ±0 tie.
+- The token checker (`TOKEN_CHECK=1` debug twin) is fed by granted
+  scratchpad accesses *and* by the operand tiles an instruction names at
+  issue, because the simulator checks the reference, not the bytes (an MMA on
+  a zero-shaped untokened tile reads no data).
+- Programs ran unchanged; the simulator-level deviations the RTL settled
+  (BAD_QUALIFIER for `LOAD.IDX` on block-scaled formats and `STORE.2D
+  f4.r16`, BAD_SHAPE for `K = 0`, BAD_OPCODE for SEND/RECV) are recorded,
+  not spec changes.
+- Calibration entered the RTL's structure as `DeviceTiming.rtl_rules` with
+  measured constants rather than fitting the planning rules' values; the
+  planning descriptor is `KV260_PLAN` and `model/sweeps.py` stays on it so
+  the phase-5 tables reproduce. The `mma` vector program grew the accumulate
+  and A-from-ACC forms and a `loop` program was added to measure the front
+  end; `tb_top.sv` traces front-end dispatches (`FE DISP`).
+- Scratchpad ports in the model are the as-built ones (2 readers + 1 writer
+  per bank, banks shared by all slots); the `mma` program's STORE of a tile
+  the array is reading showed the planning (1, 1) ports serialize what the
+  RTL overlaps.
 
 ## Environment
 
-- No GPU, aarch64. Interpreter: `~/Projects/tilelang-cutoff/.venv/bin/python`
-  (tilelang 0.1.15, bundled TVM 0.25.dev0, Python 3.14); `pip install
-  tilelang==0.1.15 numpy pytest` recreates it (sha256 in PINNED.md).
-- Run everything: `python -m pytest tests -q` from the repo root (~30 s).
-- Regenerate: `python ref/kernels.py fixtures` (fixtures, not in git),
-  `python compiler/prototype/dump_programs.py` (program listings),
-  `python compiler/prototype/cut.py`, `python compiler/prototype/overlap_report.py --markdown`,
-  `python model/sweeps.py` (phase-5 tables, ~65 s), `python model/sweeps_mlp.py`
-  (phase-6 tables, ~100 s), `python model/module0.py [--sweep] [--cycle-key ...]`.
+- No GPU, aarch64 (Arch). Interpreter: `~/Projects/tilelang-cutoff/.venv/bin/python`
+  (tilelang 0.1.15, Python 3.14). Verilator 5.052 (pacman). Yosys 0.54-3
+  from pacman does not load (built against boost 1.89, boost-libs is 1.92);
+  `sby` and `yosys-slang` are not packaged. A prebuilt OSS CAD Suite
+  (linux-arm64, 2026-10-26) with all of them is unpacked at
+  `~/.local/opt/oss-cad-suite/bin` but was not run in this session. Vivado:
+  x86 only.
+- Run everything: `python -m pytest tests -q` (~65 s); `make -C rtl/test
+  all` (~10 min incl. two Verilator builds); `make -C rtl/test lint`;
+  `python rtl/test/calibrate.py`.
+- Regenerate: `python rtl/test/gen_vectors.py` (vectors from the simulator;
+  `make -C rtl/test vectors`), `python rtl/gen_pkg.py` (after an `encode.py`
+  change), `python ref/kernels.py fixtures`, `python compiler/prototype/dump_programs.py`,
+  `python model/sweeps.py` (phase-5 tables, `KV260_PLAN`), `python model/sweeps_mlp.py`.
+- Formal (once Yosys + sby work): `cd rtl/formal && sby -f token_fifo.sby
+  && sby -f bank_arbiter.sby`. Synthesis: `yosys -s rtl/synth/yosys_xck26.ys`
+  (needs the slang plugin); `vivado -mode batch -source rtl/synth/vivado_ooc.tcl`.
 
 ## Not done / out of scope
 
-Power, area, RTL, Verilator, COMM between cores or chips, V4.1-Flash shapes,
-FP8/MX attention, DSpark, autotuning, the MLA K-split reduction (moot for a
-one-array core). Open for the main session: the arbiter's grant policy
-(convoy on identical programs), `sfu_lanes` (now on the MoE critical path),
-and the request-burst queueing that keeps η_bw at 0.64 with 52 % channel
-utilization.
+J6's bounded model check and J7's synthesis numbers (toolchain, above).
+Phase 8: MoE/MLA/KDA on the RTL (mechanical through `gen_vectors.py`; they
+measure the gather path, VTOPK, VGATE/VMASK/VSEL and the dequant formats the
+calibration takes from the FSMs), the RTL items the calibration surfaced (row
+prefetch / pipelined DMA, column-vector layout, SFU slice pipelining,
+pipelined accumulate writeback), COMM, multi-core, AXI/DDR, the board, power,
+ASIC synthesis. Open for the main session from phase 6: the arbiter's grant
+policy (convoy), `sfu_lanes`, request-burst queueing at 4 cores.

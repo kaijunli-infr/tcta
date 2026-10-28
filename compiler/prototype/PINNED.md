@@ -124,6 +124,19 @@ from the earlier sliding-window prototype).
   knob: a LOAD.2D/STORE.2D striped over k channels, gather rows round-robin
   over k channels.
 
+## Phase 7 notes (RTL core v0, same versions)
+
+- `tcta.timing.KV260` is now the *measured* v1 core (`rtl_rules=True`,
+  `docs/calibration-report.md`); the phase-5/6 planning descriptor of the same
+  core is `KV260_PLAN`, which `model/sweeps.py` and the planning-rule tests use.
+  `CONFIG_C` is unchanged (planning values). On the measured core a column
+  vector `[M, 1]` costs M VEC cycles and an op with a row-vector operand one
+  extra cycle per row: FA's `[64, 1]` statistics ops are 70-134 cycles each,
+  not 4. The DMA is row-serial (3-5x the planned time per tile load).
+- Programs ran on the RTL unchanged (GEMM bit-exact, FA within §9); the only
+  ISA change of the phase is erratum E1 (§16: the MMA k-sum and row-sum
+  orders), which the simulator implements since this phase.
+
 ## Phase 6 notes (ISA v0.1.4 §11, rings and cores), same versions
 
 - Rings deeper than the trip count of the loop they pipeline are not rings:

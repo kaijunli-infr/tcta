@@ -105,6 +105,13 @@ class DeviceConfig:
     fifo_depth: int = 8                     # v0.1.4: 8 on every edge (4 deadlocks the KDA program)
     t_deadlock: int = 1_000_000
     n_regs: int = 16
+    # ---- accumulation orders (ISA §9: implementation-defined, deterministic per configuration; phase 7 fixes
+    #      them to what the RTL does so the RTL can be bit-exact against this simulator) ----
+    # MMA: each output element sums its K products sequentially in k order from 0 in float32, the mask (if any)
+    # is applied to that sum, then the previous accumulator value is added once (accumulate=1).
+    # Row reductions (VROWSUM, VEXP2.SUM): `sum_lanes` lanes, lane l sums columns l, l+L, l+2L, ... sequentially
+    # in float32 (columns >= cols_valid contribute 0), then the L partials are added as a binary tree.
+    sum_lanes: int = 16
 
 
 # ISA §11 descriptors (v0.1.4). ACC "8 + 2 wide" is 16 slot indices (a wide accumulator is 4 consecutive slots).

@@ -1,3 +1,12 @@
 fixtures/
 __pycache__/
 .pytest_cache/
+# phase 7: Verilator build trees and the regenerable bulk of the vector directories (make -C rtl/test vectors / run)
+rtl/test/obj_dir*/
+rtl/test/fp/obj_dir/
+rtl/test/fp/fp_in.hex
+rtl/test/fp/fp_out.hex
+rtl/test/vectors/*/dram.hex
+rtl/test/vectors/*/expect_dram.hex
+rtl/test/vectors/*/dram_out.hex
+rtl/test/vectors/*/sp_dump.txt

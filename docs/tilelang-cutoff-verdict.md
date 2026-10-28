@@ -898,3 +898,133 @@ The arbiter's grant policy and per-request overhead; the channel interleave
 granularity behind `request_channels`; the gather window (512); `sfu_lanes`
 (now on the MoE critical path); the per-core dispatch and FIFO costs with
 four streams.
+
+# Phase 7: RTL core v0 and the Verilator conformance harness (toward Gate 2)
+
+Task: `docs/phase7-rtl-core-task.md`. ISA v0.1.5 (Gate 1 frozen) plus
+erratum E1 (§16: the MMA k-sum and row-sum orders the array and the VEC
+reductions use; the simulator implements it since this phase). Decisions
+applied: **SystemVerilog** (Kevin's override of the Chisel default, same
+module boundaries); synthesis **both** ways (a Yosys `synth_xilinx` estimate
+here, Vivado out-of-context scripts for an x86 machine). Deliverables: J1
+`sim/tcta/encode.py` + §12 normative (commit c771593); J2 `rtl/src/` (one
+core, 20 modules, lint-clean under `-Wall`); J3 `rtl/test/` (Verilator
+harness, nine programs, per-instruction trace in the cycle model's shape); J4
+conformance; J5 `docs/calibration-report.md` and the calibrated `KV260`
+descriptor; J6 `rtl/formal/` properties and jobs; J7 this section,
+`rtl/synth/`. Whole repo: **92 passed**; `make -C rtl/test all`: 9/9 PASS,
+also with the formal properties compiled as runtime assertions (`FORMAL=1`).
+Code touched outside `rtl/`: `sim/tcta/{isa,machine}.py` (E1 orders),
+`sim/tcta/{timing,cycle}.py` (the `rtl_rules` cost model, `KV260` /
+`KV260_PLAN`), `tests/test_{sim,cycle}.py`, `model/sweeps.py` (pinned to
+`KV260_PLAN`), `isa/isa-v0.1.md` (§16 E1).
+
+## Verdict: PASS-WITH-CAVEATS (J6 and the synthesis half of J7 pending the toolchain)
+
+Per §3 of the task:
+
+- **J1–J4 PASS.** GEMM's DRAM output is bit-exact with the simulator (17
+  pages); FA is within §9 (row-max error 4.03e-3 against the fixture, equal
+  to the simulator's own, tolerance 2⁻⁷); every instruction event of the
+  nine programs retires in the simulator's multiset; the three negative
+  tests fault with the simulator's codes (TOKEN_LEAK at FINISH,
+  TOKEN_TIMEOUT at cycle 206 with `t_deadlock` 200, UNTOKENED_READ at MMA
+  pc 4 under `TOKEN_CHECK=1`). **No program changed to run on RTL**, so no
+  erratum beyond E1 was needed; the compiler's GEMM and FA streams ran as
+  encoded. The FP library is bit-exact with NumPy float32 on 200 000 random
+  pairs per op.
+- **J5 PASS-WITH-CAVEATS.** Cycle model vs RTL: GEMM 11286 vs 11291
+  (−0.0 %), FA 38642 vs 38543 (+0.3 %), the four micro-programs within
+  0.1 %. The 10 % bar is met only after `DeviceTiming` rule changes
+  (`rtl_rules`): row-serial DMA, the array's block schedule with per-row
+  writeback and no drain overlap, the slice-serial VEC pipe, a 3-cycle front
+  end with 16-deep instruction queues, one cycle of PUSH visibility, and the
+  as-built scratchpad ports (2 readers + 1 writer per bank, all slots
+  sharing the banks). With the planning rules the model is 28–50 % under
+  the RTL. Every constant is measured (report §1); the planning descriptor
+  survives as `KV260_PLAN`.
+- **J6 not concluded (toolchain).** The properties exist (`token_fifo.sv`,
+  `scratchpad.sv` under `ifdef FORMAL`), the SymbiYosys jobs are written
+  (depth 24, yices), but the distro `yosys 0.54-3` does not load (boost ABI)
+  and `sby` is not installed; the prebuilt OSS CAD Suite on the machine was
+  not to be executed. Evidence short of a proof: all nine programs run with
+  the properties as runtime assertions (`make all FORMAL=1`), no violation
+  in 157 000 simulated cycles of seven-client arbitration and token traffic.
+  A FAIL condition (a counterexample on `TokenFifo`) has therefore not been
+  ruled out formally; nothing points at one.
+- **J7 synthesis not run.** `rtl/synth/yosys_xck26.ys` needs the same
+  Yosys plus `yosys-slang`; `rtl/synth/vivado_ooc.tcl` + `.xdc` (part
+  `xck26-sfvc784-2LV-c`, 200 MHz) are ready for an x86 machine with Vivado.
+  Fmax and LUT/DSP/BRAM/URAM against the budget are open; the design has
+  single-cycle binary32 add/multiply paths (mma_pe, the VEC lanes) and
+  32-entry combinational SFU interpolation, which is where 200 MHz will be
+  decided.
+
+## The numbers in one table (v1 KV260 core, RTL cycles at the harness's 24-cycle memory latency)
+
+| | RTL | planning model | calibrated model | what the gap is |
+|---|---|---|---|---|
+| GEMM 50×100·100×96 (compiler program) | 11291 | 5633 (−50 %) | 11286 | loads 6710 of 11291: row-serial DMA at 5 B/cycle |
+| FA, 4 KV tiles of 64 (compiler program) | 38543 | 27856 (−28 %) | 38642 | nine K/V/Q loads 21933 cycles on the LOAD queue; VEC chain 4581 per tile (plan 4156) |
+| LOAD.2D 64×128 BF16 (16 KB) | 3205 | 1124 | 3205 | 50 cycles per row = 24 latency + 16 beats + 8 slices + 2 |
+| STORE.2D 64×128 f32 (32 KB) | 3140 | 2148 | 3140 | 49 per row = 2·8 slice reads + 32 beats + 1 |
+| MMA 64×128×128 / accumulate | 4152 / 4184 | 4104 | 4152 / 4182 | 32 blocks × 128 + drain 56 / 88 |
+| MMA accumulate 64×64×64 (FA PV) | 1231 | 1032 | 1257 | writeback-bound: 4 cycles per row at P = 64 |
+| VEC op on `[64, 128]` / with a column-vector operand | 518 / 582 | 512 | 518 / 582 | 1 slice per cycle; +1 read per row for the vector |
+| VEC op on a `[64, 1]` vector / with a vector operand | 70 / 134 | 4 | 70 / 134 | a column vector is one element per row (column banking) |
+| VEXP2 `[64, 1]` / VEXP2.SUM `[64, 64]` | 389 / 1927 | 16 / 3072 | 390 / 1926 | SFU 6 cycles per slice, one in flight; the sum is fused |
+| front end | 3 cycles per word, PUSH/POP words too; ext word 2 + entries; LOOP/ENDLOOP 2; LOOP r 1 + ⌈R/step⌉ after VCOUNT | 1 / free / 2 / 4 | as measured | never on GEMM's or FA's critical path |
+
+## Findings for the main session
+
+1. **The v0 DMA engine is row-serial**: every row pays the memory latency,
+   so a tile load runs at 3.4–5.1 B/cycle against the planned 16. It is the
+   whole GEMM gap and most of FA's. Phase-8 RTL item one: prefetch the next
+   row while the current one waits (≈ 1.6–2×), or pipeline rows fully
+   (beats-bound, the plan). The cycle model's planning DMA rule is right
+   for that machine, not for this one.
+2. **Column vectors cost M cycles on this banking.** §11's `bank = column
+   mod 16` puts a `[M, 1]` vector in one bank, so the lanes cannot help; FA's
+   per-row statistics (VROWMAX result, the running max, the row sums, their
+   exps and reciprocals) are 70–134 cycles per op instead of 4. ISA v0.2
+   candidate: hold per-row statistics as row vectors (`[1, T_VR]`, which the
+   VEC row slots already are) with the reductions writing transposed, or a
+   column-mode slot map (row mod 16) for the `[M, 1]` slots.
+3. **The SFU is 6 cycles per slice, not 4**: one slice in flight through the
+   4-lane pipe. Pipelining slices is −33 % on every SFU op; VEXP2.SUM is 42 %
+   of FA's VEC time on the RTL. The fused VEXP2.SUM (one pass) is what the
+   plan should assume for `sfu_fused_sub_sum` on the v1 core.
+4. **§8.5 holds at the queue, not at the front end**: PUSH and POP take no
+   issue slot (a queue retires its leading syncs in the ISSUE cycle of the
+   next work instruction, measured), but each is a stream word the front end
+   spends 3 cycles on. Worth one sentence in §8.5 ("sync instructions cost no
+   issue slot; their dispatch cost is implementation-defined").
+5. **Accumulate MMAs with K ≤ 64 are writeback-bound** (+14 % on FA's PV):
+   the read-modify-write takes 4 cycles per result row against the array's
+   4 cycles per row at P = 64. Pipelining the old-value read with the
+   previous row's write makes it 2.
+6. **The token checker needs issue-time operand events.** The simulator
+   raises UNTOKENED_READ when an instruction *names* an untokened tile; the
+   RTL's MMA, seeing a zero-shaped WGT tile, never read its data, so a
+   checker fed by scratchpad accesses alone saw nothing. `token_check.sv`
+   now also takes the operand tiles at issue; this is a statement about §8.4
+   worth making explicit: the check is on the operand reference, not on the
+   bytes.
+7. **ISA details the RTL settled** (recorded, no spec change): `LOAD.IDX` on
+   block-scaled formats and `STORE.2D f4.r16` are BAD_QUALIFIER in v0; `MMA`
+   with `K = 0` is BAD_SHAPE; SEND/RECV are BAD_OPCODE (COMM stub); the
+   `np.maximum` ±0 tie rule (`+0`) is what `f32_max` implements, so VROWMAX
+   is bit-exact.
+8. **Toolchain**: formal and synthesis wait on a working Yosys (the distro
+   package is broken against boost 1.92; `sby` is not packaged). The jobs
+   and scripts are ready; `make all FORMAL=1` is the simulation evidence.
+
+## Calibration (what the plan should now carry for the v1 core)
+
+`tcta.timing.KV260` is the measured core; `docs/calibration-report.md` §1
+lists every value with the trace it came from and §2 what still differs
+(the accumulate handshake, ±1-cycle per-instruction overheads, cycle- vs
+instruction-granular port arbitration, the gather and VTOPK formulas taken
+from the FSMs, the harness's 24-cycle memory latency). `f_mhz` stays 200
+until synthesis says otherwise. Phase 8 (MoE/MLA/KDA on RTL) measures the
+gather path, VTOPK, VGATE/VMASK/VSEL and the dequant formats.

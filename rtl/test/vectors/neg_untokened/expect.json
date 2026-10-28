@@ -1,0 +1,30 @@
+{
+ "name": "neg_untokened",
+ "n_instrs": 6,
+ "n_words": 6,
+ "n_desc": 2,
+ "t_deadlock": 1000000,
+ "fifo_depth": 8,
+ "ok": false,
+ "fault": {
+  "code": "UNTOKENED_READ",
+  "queue": "MMA",
+  "pc": 4
+ },
+ "steps": null,
+ "pages": [
+  0,
+  4096,
+  8192,
+  12288,
+  65536,
+  69632,
+  73728,
+  77824,
+  81920,
+  86016,
+  90112,
+  94208
+ ],
+ "checks": []
+}

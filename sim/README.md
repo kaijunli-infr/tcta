@@ -67,8 +67,9 @@ No semantic effect.
 
 ## Cycle model (phase 5)
 
-`tcta/timing.py` holds `DeviceTiming` (every timing parameter, named and defaulted
-for the v1 KV260 and for config C; all planning values) and `tcta/cycle.py` the
+`tcta/timing.py` holds `DeviceTiming` (every timing parameter, named; `KV260`
+carries the values measured on the phase-7 RTL under `rtl_rules`, `KV260_PLAN`
+the phase-5 planning values of the same core, `CONFIG_C` planning values) and `tcta/cycle.py` the
 `CycleMachine(Machine)`: the same functional run, then a discrete-event timing
 pass over the recorded per-queue instruction streams (in-order queues, tokens at
 the producer's completion, FIFO depth, array/DMA-channel/VEC units, scratchpad
@@ -90,4 +91,14 @@ rotate across cores) and returns a `MultiTiming` (chip cycles, η_bw, η_mfu,
 channel utilization, per-core `Timing` with `stall_arbiter`). The multi-core
 runs check every core's functional result against the single-core run
 (`tests/test_cycle.py`, `model/sweeps_mlp.py`).
+
+Phase 7 (RTL calibration, `docs/calibration-report.md`): `DeviceTiming.rtl_rules`
+switches the replay to the v0 core's structure -- row-serial DMA (per row the
+memory latency, the beats, one slice per 16 columns), the MMA block schedule
+(result FIFO, per-row writeback, no drain overlap), the slice-serial VEC pipe
+(a column vector of M elements costs M cycles, a row-vector operand one read per
+row, SFU 6 cycles per slice, VEXP2.SUM fused), a 3-cycle-per-word front end with
+16-deep instruction queues, one cycle of PUSH visibility -- with every constant
+measured on the Verilator trace (`rtl/test/calibrate.py`). `KV260` is that
+descriptor; the planning one is `KV260_PLAN` (`model/sweeps.py` stays on it).
 

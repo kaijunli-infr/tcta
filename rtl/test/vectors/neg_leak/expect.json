@@ -1,0 +1,17 @@
+{
+ "name": "neg_leak",
+ "n_instrs": 2,
+ "n_words": 2,
+ "n_desc": 0,
+ "t_deadlock": 1000000,
+ "fifo_depth": 8,
+ "ok": false,
+ "fault": {
+  "code": "TOKEN_LEAK",
+  "queue": null,
+  "pc": -1
+ },
+ "steps": null,
+ "pages": [],
+ "checks": []
+}

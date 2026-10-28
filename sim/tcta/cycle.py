@@ -223,13 +223,15 @@ class _RecFrontEnd(_FrontEnd):
 
     def _instantiate(self, ins):
         new = super()._instantiate(ins)
-        self.rec.append(("ins", new))
+        self.rec.append(("ins", new, ins.incr))          # the template's loop-variant fields: its extension words
         return new
 
     def _control(self, ins):
+        depth = len(self.loops)
         ok = super()._control(ins)
         if ok:
-            self.rec.append((ins.op, ins.args.get("r"), ins.args.get("n")))
+            count = self.loops[-1]["count"] if (ins.op == "LOOP" and len(self.loops) > depth) else 0
+            self.rec.append((ins.op, ins.args.get("r"), ins.args.get("n"), count))
         return ok
 
 
@@ -297,25 +299,26 @@ class CycleMachine(Machine):
                 bK, N = N, bK
             if a.get("wide"):
                 N = N * 4
-            inf.update(M=M, K=K, N=N)
+            inf.update(M=M, K=K, N=N, acc=bool(a.get("accumulate")))
         elif op in ("LOAD.2D", "LOAD.3D"):
             r = a["region"]
             rows, cols = a["rows_valid"], a["cols_valid"]
             nb = dt.row_bytes_for(r.dtype, cols)
             if r.dtype in ("f4.b32", "f8.b32"):
                 nb += cols // 32
-            inf.update(rows=rows, bytes=rows * nb, dtype=r.dtype, requests=1)
+            inf.update(rows=rows, cols=cols, bytes=rows * nb, dtype=r.dtype, requests=1)
         elif op == "LOAD.IDX":
             its = self.sp[a["idx"]]
             n = a["nrows"]
             idx = its.data[0, :n]
             live = int((idx != -1).sum())
-            inf.update(rows=live, row_bytes=a["row_bytes"], bytes=live * a["row_bytes"], dtype=a["region"].dtype, gather=True)
+            inf.update(rows=live, nrows=n, cols=a["cols_valid"], row_bytes=a["row_bytes"], bytes=live * a["row_bytes"],
+                       dtype=a["region"].dtype, gather=True)
         elif op == "STORE.2D":
             r = a["region"]
             el = {"f32": 4, "i32": 4, "bf16": 2}.get(r.dtype, 1)
             rows, cols = a["rows_valid"], a["cols_valid"]
-            inf.update(rows=rows, bytes=rows * cols * el, dtype=r.dtype, requests=1)
+            inf.update(rows=rows, cols=cols, bytes=rows * cols * el, dtype=r.dtype, requests=1)
         elif op == "STORE.IDX":
             its = self.sp[a["idx"]]
             r = a["region"]
@@ -323,7 +326,7 @@ class CycleMachine(Machine):
             live = int((its.data[0, :n] != -1).sum())
             el = {"f32": 4, "i32": 4, "bf16": 2}.get(r.dtype, 1)
             rb = dt.pad64(a["cols_valid"] * el)
-            inf.update(rows=live, row_bytes=rb, bytes=live * rb, dtype=r.dtype, gather=True)
+            inf.update(rows=live, nrows=n, cols=a["cols_valid"], row_bytes=rb, bytes=live * rb, dtype=r.dtype, gather=True)
         elif op in ("SEND", "RECV"):
             t = self.sp[a.get("src", a.get("dst"))]
             inf.update(bytes=t.valid[0] * t.valid[1] * 4)
@@ -397,6 +400,8 @@ class CycleMachine(Machine):
     def _vec_cycles(self, op: str, inf: dict, args: dict) -> int:
         T = self.timing
         M, N = inf.get("M", 1), inf.get("N", 1)
+        if T.rtl_rules:
+            return _rtl_vec_cycles(T, op, M, N, args)
         lanes = T.sfu_lanes if op in SFU_OPS else T.vec_lanes
         if op == "VEXP2.SUM":
             passes = 1 if T.sfu_fused_sub_sum else 3
@@ -415,6 +420,93 @@ class CycleMachine(Machine):
     # ---- the timing pass (one core) ----
     def _time(self) -> Timing:
         return _replay(self.timing, [self])[0]
+
+
+# --------------------------------------------------------------------------
+# the v0 RTL rules (DeviceTiming.rtl_rules; constants measured, docs/calibration-report.md)
+# --------------------------------------------------------------------------
+
+def _slices(n: int, lanes: int) -> int:
+    return -(-n // lanes) if n > 0 else 0
+
+
+def _rtl_dma_cycles(T: DeviceTiming, q: Q, inf: dict) -> int:
+    """Row-serial DMA engine: per row the memory latency, the row's beats, one scratchpad slice per 16 columns and
+    the row-step overhead (LOAD); slice reads, beats and overhead (STORE); setup / metadata per instruction. A
+    gather adds the index-slice read per 16 rows (2 cycles) and one cycle per skipped (-1) row."""
+    rows, cols = inf.get("rows", 0), inf.get("cols", 0)
+    bpc = T.bytes_per_cycle_per_channel
+    ncg = _slices(cols, T.vec_lanes)
+    if inf.get("gather"):
+        row_bytes = inf.get("row_bytes", 0)
+    else:
+        row_bytes = inf.get("bytes", 0) // rows if rows else 0
+    beats = -(-row_bytes // bpc)
+    if q == Q.LOAD:
+        per_row = T.dram_latency_cycles + beats + ncg + T.dma_load_row_overhead
+        total = T.dma_load_setup_cycles + rows * per_row
+    else:
+        per_row = T.dma_store_slice_cycles * ncg + beats + T.dma_store_row_overhead
+        total = T.dma_store_setup_cycles + rows * per_row
+    if inf.get("gather"):
+        n = inf.get("nrows", rows)
+        total += 2 * _slices(n, T.vec_lanes) + (n - rows)
+    return total
+
+
+def _rtl_vec_cycles(T: DeviceTiming, op: str, M: int, N: int, args: dict) -> int:
+    """One [row, 16-column] slice per operand read per cycle; a row-vector operand one read per row; SFU ops hold
+    the slice for sfu_slice_cycles; VEXP2.SUM one more per slice plus its row-vector read and row-sum write;
+    VTOPK k passes over the row; per-instruction overhead."""
+    L = T.vec_lanes
+    ncg = _slices(N, L)
+    has_vec = isinstance(args.get("vec"), TRef)
+    if op in ("VEXP2", "VRCP", "VLOG2", "VSIGMOID"):
+        per_row = ncg * T.sfu_slice_cycles                       # the row-vector read overlaps the SFU steps
+    elif op == "VEXP2.SUM":
+        per_row = ncg * (T.sfu_slice_cycles + T.sfu_sum_slice_extra) + 2
+    elif op == "VTOPK":
+        per_row = int(args.get("k", 1)) * (ncg + 1)
+    else:
+        reads = {"VFILL": 1, "VSEL": 3, "VGATE": 2}.get(op, 1)   # VFILL: one write per slice
+        if op == "VMASK" and isinstance(args.get("vec"), TRef):
+            reads, has_vec = 2, False                            # tile mask: mask slice + acc slice
+        if op == "VSCALE_ACC":
+            has_vec = True
+        per_row = reads * ncg + (1 if has_vec else 0)
+    return T.vec_op_overhead_cycles + M * per_row
+
+
+def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, masked: bool) -> tuple:
+    """-> (cycles issue to done, array occupancy). Blocks (row-block major) start every P = ceil16(max(K, 16))
+    cycles once the result FIFO holds at most mma_rf_rows - 16 committed rows; a block's valid result rows appear
+    P + mma_result_latency + i cycles after its start and are written back one at a time (a row's writeback
+    starts when the previous one's started mma_wb_row_cycles (+ extras) ago); padding rows of the last row block
+    cost nothing; metadata write and done: 2 cycles."""
+    R, C = T.mac_rows, T.mac_cols
+    P = max(16, -(-K // 16) * 16)
+    nbi, nbj = -(-M // R), -(-N // C)
+    nb = nbi * nbj
+    wb = T.mma_wb_row_cycles + (T.mma_wb_acc_extra if accumulate else 0) + (T.mma_wb_mask_extra if masked else 0)
+    t, started, last_start, committed, wb_free = 0, 0, None, 0, 0
+    pending: list = []                                             # arrival cycles of valid rows, in order
+    pi = 0
+    while started < nb or pi < len(pending):
+        if started < nb and (last_start is None or t - last_start >= P) and committed <= T.mma_rf_rows - R:
+            i0 = (started // nbj) * R
+            valid = min(R, M - i0)
+            pending.extend(t + P + T.mma_result_latency + i for i in range(valid))
+            committed += valid
+            started += 1
+            last_start = t
+        if pi < len(pending) and pending[pi] <= t and wb_free <= t:
+            wb_free = t + wb
+            committed -= 1
+            pi += 1
+        if started >= nb and pi >= len(pending):
+            break
+        t += 1
+    return t + 2, nb * P
 
 
 # --------------------------------------------------------------------------
@@ -438,6 +530,8 @@ class _Core:
         self.fe_i = self.fe_time = self.fe_loop_wait = 0
         self.last_vcount: dict = {}
         self.idx = {q: 0 for q in self.queues}
+        self.disp_cnt = {q: 0 for q in self.queues}        # dispatched / taken (IQ occupancy under rtl_rules)
+        self.taken_cnt = {q: 0 for q in self.queues}
         self.ready_after = {q: 0 for q in self.queues}
         self.last_end = {q: 0 for q in self.queues}
         self.token_ready = {q: 0 for q in self.queues}
@@ -572,7 +666,12 @@ def _replay(T: DeviceTiming, machines: list) -> list:
             if vc is not None:
                 if id(vc) not in c.end_of:
                     return None
-                return max(c.fe_time, c.end_of[id(vc)] + T.vcount_to_loop_latency)
+                count = item[3] if len(item) > 3 else 0
+                return max(c.fe_time, c.end_of[id(vc)] + T.vcount_to_loop_latency + T.loop_r_count_cycles * count)
+        if item[0] == "ins" and T.iq_depth:
+            q = item[1].queue
+            if c.disp_cnt[q] - c.taken_cnt[q] >= T.iq_depth:
+                return None                                   # the IQ is full: wait for the queue to take one
         return c.fe_time
 
     def head_ready(c: _Core, q):
@@ -597,7 +696,7 @@ def _replay(T: DeviceTiming, machines: list) -> list:
             k = len(c.pop_times[e])
             if len(c.push_times[e]) <= k:
                 return None
-            return max(c.push_times[e][k], c.disp[id(ins)], c.ready_after[q])
+            return max(c.push_times[e][k] + T.push_visible_cycles, c.disp[id(ins)], c.ready_after[q])
         t = max(c.disp[id(ins)], c.ready_after[q], c.token_ready[q])
         if q == Q.MMA:
             t = max(t, min(c.arrays))
@@ -638,11 +737,23 @@ def _replay(T: DeviceTiming, machines: list) -> list:
             c.fe_i += 1
             if item[0] == "ins":
                 ins = item[1]
-                c.disp[id(ins)] = c.fe_time
-                if ins.op not in WORK:
-                    c.fe_time += 1
-                    if ins.op == "VCOUNT":
-                        c.last_vcount[ins.args["r"]] = ins
+                if T.rtl_rules:
+                    # fetch, decode, dispatch per word (PUSH / POP words included); extension words and their entries
+                    incr = item[2] if len(item) > 2 else {}
+                    n_ent = len(incr)
+                    cost = T.fe_sync_word_cycles if ins.op in WORK else T.fe_word_cycles
+                    if n_ent:
+                        cost += -(-n_ent // 2) * T.fe_ext_word_cycles + n_ent * T.fe_ext_entry_cycles
+                        cost += sum(1 for k in incr if k.endswith("_mod")) * T.fe_mod_entry_cycles
+                    c.fe_time += cost
+                    c.disp[id(ins)] = c.fe_time
+                else:
+                    c.disp[id(ins)] = c.fe_time
+                    if ins.op not in WORK:
+                        c.fe_time += 1
+                c.disp_cnt[ins.queue] += 1
+                if ins.op == "VCOUNT":
+                    c.last_vcount[ins.args["r"]] = ins
             elif item[0] in ("LOOP", "ENDLOOP"):
                 c.fe_loop_wait += t - c.fe_time
                 c.fe_time = t + T.loop_overhead_cycles
@@ -651,6 +762,7 @@ def _replay(T: DeviceTiming, machines: list) -> list:
             continue
         ins = c.streams[q][c.idx[q]]
         c.idx[q] += 1
+        c.taken_cnt[q] += 1
         a = ins.args
         if ins.op == "PUSH":
             # fires at the producer's completion; free (task §1): the queue goes on issuing while the producer
@@ -697,13 +809,20 @@ def _replay(T: DeviceTiming, machines: list) -> list:
                 items = [(x, d, ("A", x) if (d == 0 and x == a["a"]) else k) for x, d, k in items]
             t3 = port_wait(c, items, t1); s_bank = t3 - t1
             M, K, N = inf["M"], inf["K"], inf["N"]
-            occ = T.mma_occupancy(M, K, N)
-            start, end, busy = t3, t3 + occ + T.mma_latency, occ
-            c.arrays[unit] = t3 + occ
+            if T.rtl_rules:
+                # the block schedule of the v0 array; the queue holds the next MMA until this one is written back
+                tot, occ = _rtl_mma_cycles(T, M, K, N, bool(a.get("accumulate")), a.get("mask") is not None)
+                start, end, busy = t3, t3 + tot, occ
+                c.arrays[unit] = end
+                hold(c, items, start, end, t1)
+            else:
+                occ = T.mma_occupancy(M, K, N)
+                start, end, busy = t3, t3 + occ + T.mma_latency, occ
+                c.arrays[unit] = t3 + occ
+                # ports are held while the array streams (occupancy), not through the pipeline latency: a
+                # back-to-back accumulate into the same ACC forwards (task §4); consumers wait via tokens
+                hold(c, items, start, start + occ, t1)
             c.totals["macs"] += M * K * N
-            # ports are held while the array streams (occupancy), not through the pipeline latency: a
-            # back-to-back accumulate into the same ACC forwards (task §4); consumers wait via tokens
-            hold(c, items, start, start + occ, t1)
             rec = Rec(ins.pc, q, ins.op, c.disp[id(ins)], start, end, busy, s_tok, s_unit, s_bank, unit, macs=M * K * N, info=inf)
         elif q == Q.VEC:
             t3 = port_wait(c, items, t1); s_bank = t3 - t1
@@ -731,6 +850,21 @@ def _replay(T: DeviceTiming, machines: list) -> list:
             data_items = [it for it in items if it not in idx_items]
             if requests == 0:
                 start = end = t1; busy = 0; unit = 0; units = []
+            elif T.rtl_rules:
+                # the row-serial engine holds one channel for the whole instruction; a busy channel queues it
+                unit = min(range(len(chs)), key=lambda i: chs[i]); units = [unit]
+                s_x = max(chs[unit], t1); s_arb = s_x - t1
+                busy = _rtl_dma_cycles(T, q, inf)
+                end = s_x + busy
+                chs[unit] = end
+                start = t1
+                t3 = port_wait(c, data_items, s_x); s_bank = t3 - s_x
+                if s_bank:
+                    end += s_bank
+                    chs[unit] += s_bank
+                hold(c, data_items, s_x + s_bank, end, t1)
+                if idx_items:
+                    hold(c, idx_items, t1, end, t1)
             else:
                 units, s_x, end, busy, s_arb = dma(c, chs, t1, inf, requests, req_bytes, gather)
                 unit = units[0]
@@ -760,7 +894,7 @@ def _replay(T: DeviceTiming, machines: list) -> list:
             start, end, busy = t1, t1 + cyc, cyc
             rec = Rec(ins.pc, q, ins.op, c.disp[id(ins)], start, end, busy, s_tok, 0, 0, 0, bytes=inf.get("bytes", 0), info=inf)
         c.end_of[id(ins)] = end
-        c.ready_after[q] = max(c.ready_after[q], start + 1)
+        c.ready_after[q] = max(c.ready_after[q], (end + 1) if T.rtl_rules else (start + 1))
         c.last_end[q] = end
         c.token_ready[q] = 0
         c.recs.append(rec)

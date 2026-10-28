@@ -1,0 +1,16 @@
+# Yosys synth_xilinx estimate of tcta_core for the KV260's XCK26 (UltraScale+, xczu5ev-class fabric).
+#   yosys -s rtl/synth/yosys_xck26.ys        (from the repo root; needs the yosys-slang plugin of the OSS CAD Suite)
+# Numbers are an estimate: synth_xilinx maps to generic UltraScale+ cells (LUT/FF/CARRY/DSP48E2/RAMB) without
+# placement or timing; Fmax comes from the Vivado out-of-context run (vivado_ooc.tcl), not from here.
+plugin -i slang
+read_slang rtl/src/tcta_isa_pkg.sv rtl/src/tcta_pkg.sv rtl/src/fp/f32_add.sv rtl/src/fp/f32_mul.sv rtl/src/fp/f32_misc.sv \
+           rtl/src/sfu.sv rtl/src/token_fifo.sv rtl/src/token_net.sv rtl/src/scratchpad.sv rtl/src/tile_meta.sv \
+           rtl/src/token_check.sv rtl/src/dequant.sv rtl/src/dma_load.sv rtl/src/dma_store.sv rtl/src/mma_pe.sv \
+           rtl/src/mma_unit.sv rtl/src/vec_unit.sv rtl/src/front_end.sv rtl/src/queue.sv rtl/src/tcta_core.sv \
+           --top tcta_core
+hierarchy -check -top tcta_core
+synth_xilinx -family xcup -top tcta_core -nowidelut
+tee -o rtl/synth/yosys_xck26_stat.txt stat -top tcta_core
+tee -a rtl/synth/yosys_xck26_stat.txt stat -top mma_unit
+tee -a rtl/synth/yosys_xck26_stat.txt stat -top vec_unit
+tee -a rtl/synth/yosys_xck26_stat.txt stat -top mma_pe

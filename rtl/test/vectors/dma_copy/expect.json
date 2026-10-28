@@ -1,0 +1,26 @@
+{
+ "name": "dma_copy",
+ "n_instrs": 7,
+ "n_words": 7,
+ "n_desc": 2,
+ "t_deadlock": 1000000,
+ "fifo_depth": 8,
+ "ok": true,
+ "fault": null,
+ "steps": 2,
+ "pages": [
+  0,
+  4096,
+  8192,
+  12288,
+  65536,
+  69632,
+  73728,
+  77824
+ ],
+ "checks": [
+  {
+   "kind": "bitexact"
+  }
+ ]
+}

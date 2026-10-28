@@ -21,6 +21,38 @@ from .isa import EDGES, QUEUE_OF, SP, DeviceConfig, Fault, Instr, Q, Region, TRe
 
 
 # --------------------------------------------------------------------------
+# Accumulation orders (ISA §9; DeviceConfig docstring). These are what the RTL does, element for element.
+# --------------------------------------------------------------------------
+
+def _mma_sum(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """[M, K] x [K, N] in float32 with each output summing its products sequentially in k order from 0.
+    BF16 x BF16 products are exact in float32 (16 significant bits), so fl(a*b) + s and fma(a, b, s) agree
+    unless the product is subnormal; the RTL rounds the product first, as this does."""
+    M, K = A.shape; N = B.shape[1]
+    A = np.ascontiguousarray(A, np.float32); B = np.ascontiguousarray(B, np.float32)
+    S = np.zeros((M, N), np.float32)
+    for k in range(K):
+        S += A[:, k, None] * B[None, k, :]
+    return S
+
+
+def _row_sum(X: np.ndarray, lanes: int) -> np.ndarray:
+    """Per-row sum in the RTL's order: lane l accumulates columns l, l+lanes, ... sequentially in float32
+    (missing columns are 0), then a binary tree over the lanes."""
+    X = np.ascontiguousarray(X, np.float32)
+    M, N = X.shape
+    pad = (-N) % lanes
+    if pad:
+        X = np.concatenate([X, np.zeros((M, pad), np.float32)], axis=1)
+    part = np.zeros((M, lanes), np.float32)
+    for c in range(X.shape[1] // lanes):
+        part += X[:, c * lanes:(c + 1) * lanes]
+    while part.shape[1] > 1:
+        part = part[:, 0::2] + part[:, 1::2]
+    return part[:, 0]
+
+
+# --------------------------------------------------------------------------
 # Tile bookkeeping
 # --------------------------------------------------------------------------
 
@@ -352,7 +384,7 @@ class Machine:
         Am = dt.to_bf16(ats.data[:M, :K])
         Bm = bts.data[:bK, :N] if not transpose_b else bts.data[:N, :K].T
         Bm = dt.to_bf16(Bm)
-        prod = (Am.astype(np.float32) @ Bm.astype(np.float32)).astype(np.float32)
+        prod = _mma_sum(Am, Bm)
         if a.get("mask") is not None:
             mts = self._note_read(a["mask"], q, ins.pc)
             if a.get("mask_mode", "add") == "mul":
@@ -406,7 +438,7 @@ class Machine:
         a = ins.args; src = self._note_read(a["src"], q, ins.pc)
         M, N = src.valid
         d = self._note_write(a["dst"], q, (M, 1), ins.pc)
-        d.data[:M, 0] = src.data[:M, :N].sum(axis=1)
+        d.data[:M, 0] = _row_sum(src.data[:M, :N], self.cfg.sum_lanes)
 
     def _binop(self, ins: Instr, q: Q, fn) -> None:
         a = ins.args
@@ -509,7 +541,7 @@ class Machine:
         self._op_VEXP2(ins, q)
         a = ins.args; ts = self.sp[a["t"]]; M, N = ts.valid
         d = self._note_write(a["dst"], q, (M, 1), ins.pc)
-        d.data[:M, 0] = ts.data[:M, :N].sum(axis=1)
+        d.data[:M, 0] = _row_sum(ts.data[:M, :N], self.cfg.sum_lanes)
 
     def _op_VRCP(self, ins, q):
         a = ins.args; ts = self._note_read(a["t"], q, ins.pc); M, N = ts.valid

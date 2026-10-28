@@ -41,7 +41,11 @@ from fa_kernel import build_fa_kernel  # noqa: E402
 from tcta import DeviceConfig, Fault  # noqa: E402
 from tcta.cycle import CycleDeadlock, CycleMachine  # noqa: E402
 from tcta.isa import SP  # noqa: E402
-from tcta.timing import CONFIG_C_PHASE5, KV260, DeviceTiming  # noqa: E402
+from tcta.timing import CONFIG_C_PHASE5, KV260_PLAN, DeviceTiming  # noqa: E402
+
+# the phase-5/6 tables were made with the planning descriptor of the KV260 core; the calibrated `KV260`
+# (phase 7, docs/calibration-report.md) is compared against the RTL by rtl/test/calibrate.py
+KV260 = KV260_PLAN
 
 # These are the phase-5 sweeps: they run on the phase-5 descriptor (3-deep rings, one request per channel, one
 # reader per bank, FIFO 16, WGT 16) so that `python model/sweeps.py` reproduces the phase-5 tables and the

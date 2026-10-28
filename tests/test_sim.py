@@ -391,3 +391,45 @@ def test_acc_to_wgt_move_and_state_rows():
     assert np.allclose(m.sp[WGT(1)].data[:64], bf16(C), atol=1e-6)
     assert np.allclose(m.sp[STATE(0)].data[64:128, :128], -C, atol=1e-3)
     assert m.sp[STATE(0)].valid == (128, 128)
+
+
+# --------------------------------------------------------------------------
+# Phase 7: the accumulation orders are the RTL's (ISA §9, DeviceConfig docstring)
+# --------------------------------------------------------------------------
+def test_mma_and_rowsum_accumulation_orders_are_sequential():
+    from tcta.machine import _mma_sum, _row_sum
+    A = bf16(rng.standard_normal((5, 37)) * 3); B = bf16(rng.standard_normal((37, 9)) * 3)
+    S = _mma_sum(A, B)
+    ref = np.zeros((5, 9), np.float32)
+    for i in range(5):
+        for j in range(9):
+            s = np.float32(0.0)
+            for k in range(37):
+                s = np.float32(s + np.float32(A[i, k] * B[k, j]))
+            ref[i, j] = s
+    assert np.array_equal(S, ref)
+    X = rng.standard_normal((3, 50)).astype(np.float32) * 1e3
+    r = _row_sum(X, 16)
+    ref = np.zeros(3, np.float32)
+    for i in range(3):
+        part = [np.float32(0.0)] * 16
+        for c in range(50):
+            part[c % 16] = np.float32(part[c % 16] + X[i, c])
+        while len(part) > 1:
+            part = [np.float32(part[k] + part[k + 1]) for k in range(0, len(part), 2)]
+        ref[i] = part[0]
+    assert np.array_equal(r, ref)
+    # the GEMM tile still matches the BLAS result to float32 accuracy
+    m = Machine()
+    A = rng.standard_normal((64, 128)); B = rng.standard_normal((128, 128))
+    ra = put_bf16(m, 0, A); rb = put_bf16(m, 1 << 16, B)
+    ro = Region(1 << 20, "f32", (64, 128), (128 * 4, 4))
+    p = Program()
+    p.load2d(INP(0), ra, 64, 128); p.push(Q.LOAD, Q.MMA)
+    p.load2d(WGT(0), rb, 128, 128); p.push(Q.LOAD, Q.MMA)
+    p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD)
+    p.mma(ACC(0), INP(0), WGT(0)); p.push(Q.MMA, Q.STORE)
+    p.pop(Q.STORE, Q.MMA); p.store2d(ACC(0), ro, 64, 128)
+    p.finish()
+    assert m.run(p.instrs)["ok"]
+    assert np.allclose(read_f32(m, ro, 64, 128), bf16(A) @ bf16(B), rtol=1e-5, atol=1e-4)
