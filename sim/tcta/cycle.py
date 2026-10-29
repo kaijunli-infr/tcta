@@ -456,15 +456,16 @@ def _rtl_dma_cycles(T: DeviceTiming, q: Q, inf: dict) -> int:
 
 def _rtl_vec_cycles(T: DeviceTiming, op: str, M: int, N: int, args: dict) -> int:
     """One [row, 16-column] slice per operand read per cycle; a row-vector operand one read per row; SFU ops hold
-    the slice for sfu_slice_cycles; VEXP2.SUM one more per slice plus its row-vector read and row-sum write;
-    VTOPK k passes over the row; per-instruction overhead."""
+    the slice for sfu_slice_cycles; VEXP2.SUM one more per slice plus its row-vector read, row-sum write and the
+    partial add (sfu_sum_row_extra); row reductions end vec_reduce_extra cycles after their last slice (the shared
+    four-cycle reducer, phase 8 K0.2); VTOPK k passes over the row; per-instruction overhead."""
     L = T.vec_lanes
     ncg = _slices(N, L)
     has_vec = isinstance(args.get("vec"), TRef)
     if op in ("VEXP2", "VRCP", "VLOG2", "VSIGMOID"):
         per_row = ncg * T.sfu_slice_cycles                       # the row-vector read overlaps the SFU steps
     elif op == "VEXP2.SUM":
-        per_row = ncg * (T.sfu_slice_cycles + T.sfu_sum_slice_extra) + 2
+        per_row = ncg * (T.sfu_slice_cycles + T.sfu_sum_slice_extra) + 2 + T.sfu_sum_row_extra
     elif op == "VTOPK":
         per_row = int(args.get("k", 1)) * (ncg + 1)
     else:
@@ -474,7 +475,8 @@ def _rtl_vec_cycles(T: DeviceTiming, op: str, M: int, N: int, args: dict) -> int
         if op == "VSCALE_ACC":
             has_vec = True
         per_row = reads * ncg + (1 if has_vec else 0)
-    return T.vec_op_overhead_cycles + M * per_row
+    extra = T.vec_reduce_extra if op in ("VROWMAX", "VROWSUM", "VEXP2.SUM") else 0   # the shared row reducer's levels
+    return T.vec_op_overhead_cycles + M * per_row + extra
 
 
 def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, masked: bool,

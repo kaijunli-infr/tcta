@@ -418,10 +418,10 @@ def test_kv260_calibrated_reproduces_rtl_durations():
     assert ops == ["LOAD.2D", "LOAD.2D", "MMA", "MMA", "VROWMAX", "VSUB", "STORE.2D"]
     # measured on the RTL trace (rtl/test/vectors/{mma,vec}/rtl_trace.txt): LOAD 64x128 bf16 3205, 128x128 6405,
     # MMA 64x128x128 4284 / accumulate 4316 (phase 8 K0.3 unit: block-buffered operands, fixed-point cells),
-    # VROWMAX 64x128 523 (K0.2 reducer; the model keeps 518), VSUB with a column vector 582, STORE 64x128 f32 3140
+    # VROWMAX 64x128 523 (K0.2 reducer), VSUB with a column vector 582, STORE 64x128 f32 3140
     assert dur[0][1] == 3205 and dur[1][1] == 6405
     assert dur[2][1] == 4284 and dur[3][1] == 4316
-    assert abs(dur[4][1] - 519) <= 1 and dur[5][1] == 582
+    assert abs(dur[4][1] - 523) <= 1 and dur[5][1] == 582
     assert dur[6][1] == 3140
     # the front end: 3 cycles per word (PUSH / POP words too), the first LOAD dispatched at cycle 3
     assert t.recs[0].dispatch == 3

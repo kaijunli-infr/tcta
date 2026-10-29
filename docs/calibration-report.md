@@ -23,15 +23,15 @@ rules stay available as `KV260_PLAN` and are unchanged for `CONFIG_C`.
 |---|---|---|---|
 | dma_copy (LOAD f32 64×64, STORE) | 4560 | 2248 (−50.7 %) | 4557 (−0.1 %) |
 | mma (2 LOAD, 4 MMA forms, VCVT, 2 STORE) | 30480 | 24280 (−20.3 %) | 30478 (−0.0 %) |
-| vec (the FA VEC chain on one tile) | 22317 | 14056 (−37.0 %) | 22306 (−0.0 %) |
+| vec (the FA VEC chain on one tile) | 22317 | 14056 (−37.0 %) | 22314 (−0.0 %) |
 | **gemm** (compiler GEMM, 50×100·100×96) | **11144** | 5633 (−49.5 %) | **11141 (−0.0 %)** |
-| **fa** (compiler FA, 4 KV tiles of 64) | **40127** | 27856 (−30.6 %) | **39082 (−2.6 %)** |
+| **fa** (compiler FA, 4 KV tiles of 64) | **39371** | 27856 (−29.2 %) | **39370 (−0.0 %)** |
 | loop (front-end micro-test) | 814 | 1096 (+34.6 %) | 815 (+0.1 %) |
 
-Re-measured after phase 8 K0.3 (the fixed-point MMA unit, 2026-10-29): every
-MMA shape matches the RTL exactly (§1.2); the FA gap is the K0.2 row reducer
-stalling on N = 64 reductions (§2), not modelled yet. Phase-7 numbers: mma
-29952, vec 22177, gemm 11291, fa 38543 (model +0.3 %).
+Re-measured after phase 8 K0.2 / K0.3 (the shared VEC reducer, the
+fixed-point MMA unit, 2026-10-29): every MMA shape matches the RTL exactly
+(§1.2) and the reductions within 1 cycle (§1.3). Phase-7 numbers: mma 29952,
+vec 22177, gemm 11291, fa 38543 (model +0.3 %).
 
 GEMM and FA are within 10 % (the J5 bar), within 0.3 % in fact, but only
 after the rule changes of §1: with the planning rules the model
@@ -123,19 +123,20 @@ every ~73 cycles (+14 %), as in phase 7, plus the first fill.
 | op on a column vector `[M, 1]` | `⌈M/16⌉` (4 for 64) | **M** (64): the lanes span columns; a column vector is one element per row |
 | op with a row-vector operand (`vec=`, `VSCALE_ACC`) | same as without | **+1 per row** (the vector element is read before the row's slices) |
 | SFU op (VEXP2, VRCP, VLOG2, VSIGMOID) | `⌈M·N/4⌉` (4 cycles per slice) | **6 cycles per slice** (`sfu_slice_cycles`: issue, return, 4 lane steps; one slice in flight), the row-vector read overlapped |
-| VEXP2.SUM | 3 passes unfused (12 per slice) | **fused, one pass**: 7 per slice + 2 per row (`sfu_fused_sub_sum = True`, `sfu_sum_slice_extra = 1`) |
+| VEXP2.SUM | 3 passes unfused (12 per slice) | **fused, one pass**: 7 per slice + 3 per row (`sfu_fused_sub_sum = True`, `sfu_sum_slice_extra = 1`, `sfu_sum_row_extra = 1`: the partial add on the lane ALUs since K0.2) |
+| row reductions (VROWMAX, VROWSUM, VEXP2.SUM) | — | **+4 at the end** (`vec_reduce_extra`): the shared four-cycle reducer of K0.2 (8 adders, level 0 in the fire cycle); rows of ≥ 4 slices stream without a stall since the last slice is issued when the reducer frees by the time it returns |
 
 | instruction | RTL | calibrated | planning |
 |---|---|---|---|
 | VADD/VMUL/VNEG/VCOPY/VCVT imm, 64×128 | 518 | 518 | 512 |
-| VROWMAX / VROWSUM 64×128 | 519 | 518 | 512 |
+| VROWMAX / VROWSUM 64×128 | 523 | 522 | 512 |
 | VSUB vec / VSCALE_ACC 64×128 | 582 | 582 | 512 |
 | VFILL 64×1 | 69 | 70 | 4 |
 | VMAX / VADD / VSUB with a column-vector operand, 64×1 | 134 | 134 | 4 |
 | VMUL imm / VCOPY 64×1 | 70 | 70 | 4 |
 | VEXP2 64×1 (vec subtrahend) / VRCP 64×1 | 389 | 390 | 16 |
-| VEXP2.SUM 64×64 | 1927 | 1926 | 3072 |
-| VROWMAX / VMUL / VCVT / VFILL 64×64 | 263 / 262 / 262 / 261 | 262 | 256 |
+| VEXP2.SUM 64×64 | 1994 | 1994 | 3072 |
+| VROWMAX / VMUL / VCVT / VFILL 64×64 | 267 / 262 / 262 / 261 | 266 / 262 / 262 / 262 | 256 |
 | VSCALE_ACC 64×64 | 326 | 326 | 256 |
 
 ### 1.4 Front end, queues and tokens (`front_end.sv`, `queue.sv`, `token_net.sv`)
@@ -174,12 +175,12 @@ array), COMM link values (not built).
 
 ## 2. What still differs (after calibration)
 
-- **Row reductions at N = 64 (phase 8 K0.2)**: the shared four-cycle row
-  reducer blocks a row's last slice while it is busy, so `VROWMAX 64×64`
-  costs 456 cycles (model 262; 263 in phase 7) and `VEXP2.SUM 64×64` 1994
-  (model 1926; 1927 in phase 7): FA −2.6 %. A pacing fix in `vec_unit.sv`
-  (issue the last slice when the reducer frees by the time it returns) is
-  the K0.2 follow-up; until then the model keeps the phase-7 cost.
+- **Row reductions with fewer than 4 slices per row** (N ≤ 48): the shared
+  reducer (K0.2) then stalls the last slice of every row until it is free
+  (up to 3 cycles per row); not in the model (no program measures it; FA's
+  and the micro-programs' reductions have 4 or 8 slices). K0.2's first rule
+  blocked while the reducer was busy and cost 3 cycles per row at 4 slices
+  (`VROWMAX 64×64` 456): fixed in the K0.2 follow-up.
 - **Per-instruction overheads ±1 cycle**: VFILL 5 (model 6), VROWMAX/VROWSUM
   7 (model 6), VCOUNT 6 (model 7); the FINISH detection adds 3 cycles after
   the last DONE that the model does not count (every total is 3–5 cycles

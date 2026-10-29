@@ -7,10 +7,10 @@ instance counts. `own` = the module without its children; `total` = with them. N
 
 | cell | count | KV260 budget | used |
 |---|---|---|---|
-| LUT | 200139 | 117120 | 170.9 % |
+| LUT | 200006 | 117120 | 170.8 % |
 | MUXF | 0 |  |  |
-| FF | 59868 | 234240 | 25.6 % |
-| CARRY | 8446 |  |  |
+| FF | 59878 | 234240 | 25.6 % |
+| CARRY | 8447 |  |  |
 | DSP | 624 | 1248 | 50.0 % |
 | BRAM36 | 192 | 144 | 133.3 % |
 | BRAM18 | 214 |  |  |
@@ -24,8 +24,8 @@ other cells: INV 5095
 
 | module | instances | own LUT | own MUXF | own FF | own CARRY | own DSP | own BRAM36 | total LUT | total MUXF | total FF | total CARRY | total DSP | total BRAM36 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| tcta_core | 1 | 8361 | 0 | 107 | 19 | 0 | 0 | 200139 | 0 | 59868 | 8446 | 624 | 192 |
-| vec_unit | 1 | 18952 | 0 | 4852 | 1105 | 2 | 0 | 53714 | 0 | 4852 | 3005 | 50 | 0 |
+| tcta_core | 1 | 8361 | 0 | 107 | 19 | 0 | 0 | 200006 | 0 | 59878 | 8447 | 624 | 192 |
+| vec_unit | 1 | 18819 | 0 | 4862 | 1106 | 2 | 0 | 53581 | 0 | 4862 | 3006 | 50 | 0 |
 | mma_unit | 1 | 25989 | 0 | 8571 | 2198 | 9 | 0 | 51781 | 0 | 29563 | 3302 | 537 | 0 |
 | f32_add | 40 | 643 | 0 | 0 | 37 | 0 | 0 | 643 | 0 | 0 | 37 | 0 | 0 |
 | dma_load | 1 | 5505 | 0 | 1654 | 316 | 11 | 0 | 18082 | 0 | 1654 | 1176 | 27 | 0 |

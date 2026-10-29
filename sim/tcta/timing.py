@@ -90,6 +90,8 @@ class DeviceTiming:
     vec_op_overhead_cycles: int = 6
     sfu_slice_cycles: int = 6
     sfu_sum_slice_extra: int = 1
+    sfu_sum_row_extra: int = 0          # VEXP2.SUM: the partial add on the lane ALUs after a row's last slice (K0.2: 1)
+    vec_reduce_extra: int = 0           # VROWMAX / VROWSUM / VEXP2.SUM: the shared reducer's levels after the last slice (K0.2: 4)
     #   MMA (rtl/src/mma_unit.sv, replayed cycle by cycle in cycle._rtl_mma_cycles): mma_setup_cycles from issue to
     #   the run state; operand fills of 16 * ceil16(K) / 16 cycles per A row block and K (MMA) or 16 * n_cg (MMA.T)
     #   per B block into four buffer halves, a half ready mma_fill_ready_latency after its last read and free again
@@ -163,7 +165,7 @@ KV260 = DeviceTiming(
     rtl_rules=True,
     dram_latency_cycles=24,
     dma_load_setup_cycles=5, dma_store_setup_cycles=4, dma_load_row_overhead=2, dma_store_row_overhead=1, dma_store_slice_cycles=2,
-    vec_op_overhead_cycles=6, sfu_slice_cycles=6, sfu_sum_slice_extra=1, sfu_fused_sub_sum=True,
+    vec_op_overhead_cycles=6, sfu_slice_cycles=6, sfu_sum_slice_extra=1, sfu_sum_row_extra=1, vec_reduce_extra=4, sfu_fused_sub_sum=True,
     mma_setup_cycles=2, mma_fill_ready_latency=2, mma_release_latency=20, mma_result_latency=21,
     mma_wb_row_cycles=2, mma_wb_acc_extra=2, mma_wb_mask_extra=3, mma_wb_mask_mul_extra=4, mma_rf_rows=32,
     fe_word_cycles=3, fe_sync_word_cycles=3, fe_ext_word_cycles=2, fe_ext_entry_cycles=1, fe_mod_entry_cycles=1,

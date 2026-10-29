@@ -11,8 +11,8 @@
 // The lanes are free during the SFU's step cycles, so the sigmoid chain's multiply (x * -log2 e) and add
 // (1 + exp2) and the VGATE decay multiply run on lanes 0 .. SFU_LANES-1. The row-reduction tree is a four-cycle
 // reducer on RED_W = L/2 adders (level n pairs adjacent partials, the E1 order); its row write is held until
-// the write FIFO takes it, and a row's last slice is not issued while the reducer is busy (never stalls for
-// n_cg >= 5). v0 had 95 adders, 36 multipliers and 47 comparators in this unit (122 k LUTs).
+// the write FIFO takes it, and a row's last slice is issued only when the reducer is free by the time the slice
+// returns (never stalls for n_cg >= 4; K0.2's rule blocked while busy and cost 3 cycles per row at n_cg = 4). v0 had 95 adders, 36 multipliers and 47 comparators in this unit (122 k LUTs).
 module vec_unit
   import tcta_isa_pkg::*;
   import tcta_pkg::*;
@@ -97,7 +97,8 @@ module vec_unit
   logic   red_fire; logic [9:0] red_row;
   wreq_t  rsp_w, row_w, sfu_w, topk_w; logic rsp_w_push, row_w_push, sfu_w_push, topk_push;
   // row reducer
-  logic   red_busy, red_done; int red_lvl; logic [31:0] red_reg [L]; logic [9:0] red_row_q; logic [31:0] red_result;
+  logic   red_busy, red_done; int red_lvl; logic [31:0] red_reg [L]; logic [9:0] red_row_q, red_row_d; logic [31:0] red_result;
+  logic   red_free_at_fire;                   // the reducer takes a fire two cycles after the slice's issue
   logic [31:0] red_a [RED_W], red_b [RED_W], red_sum [RED_W], red_max [RED_W];
   // VTOPK / VCOUNT
   logic [T_VR-1:0] selected;
@@ -164,18 +165,23 @@ module vec_unit
 
   // ================================================================ issue side
   always_comb begin
-    // pacing: the tag queue, room in the write FIFO (one slot reserved for a held reduction result); SFU kinds
+    // pacing: the tag queue, room in the write FIFO (one slot reserved for a reduction result waiting to be pushed); SFU kinds
     // keep one slice in flight; VTOPK waits at a pass boundary until the previous pass has been written (its
     // column must be marked selected first); a reduction's last slice waits for the reducer
-    if (is_sfu) can_issue = (tag_cnt == 0) && !sfu_busy && !exp_sum_pending && (wq_cnt + (red_busy || red_done ? 1 : 0) <= WQ - 2);
-    else can_issue = (tag_cnt < 2) && (wq_cnt + int'(tag_cnt) + (red_busy || red_done ? 1 : 0) <= WQ - 2);
+    if (is_sfu) can_issue = (tag_cnt == 0) && !sfu_busy && !exp_sum_pending && (wq_cnt + (red_done ? 1 : 0) <= WQ - 2);
+    else can_issue = (tag_cnt < 2) && (wq_cnt + int'(tag_cnt) + (red_done ? 1 : 0) <= WQ - 2);
     if (kind == K_TOPK && (topk_fire || (s_cg == 0 && tag_cnt != 0))) can_issue = 1'b0;
     if (is_red) begin
       logic last_inflight;                        // a row's last slice is already in flight (its return would fire the reducer)
       last_inflight = (tag_cnt >= 2'd1 && !tagq[0].vec && int'(tagq[0].cg) + 1 >= n_cg) ||
                       (tag_cnt == 2'd2 && !tagq[1].vec && int'(tagq[1].cg) + 1 >= n_cg);
+      // the last slice issued now returns next cycle and fires level 0 the cycle after: the reducer must be
+      // free then (level 0 of another row this cycle or next cycle, or more than two levels left, block it),
+      // and a held result (write FIFO full) with another row in the pipe blocks too, so a done never overwrites
+      // an unpushed one. Rows of n_cg >= 4 slices therefore stream without a stall (K0.2 blocked while busy).
+      red_free_at_fire = !red_fire && !last_inflight && (!red_busy || red_lvl >= RED_LEVELS - 2) && !(red_done && red_busy);
       if (red_fire && s_cg == 0) can_issue = 1'b0;
-      if ((red_busy || red_done || red_fire || last_inflight) && s_cg + 1 >= n_cg && !s_vec_pending) can_issue = 1'b0;
+      if (!red_free_at_fire && s_cg + 1 >= n_cg && !s_vec_pending) can_issue = 1'b0;
     end
     // which tile the next read touches
     rd_tile = t_src; rd_row = s_row; rd_cg = s_cg;
@@ -316,7 +322,7 @@ module vec_unit
     for (int b = 0; b < L; b++) sfu_w.data[b] = sfu_slice[b];
     for (int b = 0; b < SFU_LANES; b++) sfu_w.data[sfu_step * SFU_LANES + b] = sfu_out[b];
     sfu_w_push = sfu_busy && (sfu_step == SFU_STEPS - 1) && write_slice;
-    row_w = '0; row_w.sp = tref_sp(t_dst); row_w.slot = tref_slot(t_dst); row_w.row = red_row_q; row_w.cg = 0; row_w.ben = L'(1);
+    row_w = '0; row_w.sp = tref_sp(t_dst); row_w.slot = tref_slot(t_dst); row_w.row = red_row_d; row_w.cg = 0; row_w.ben = L'(1);
     for (int b = 0; b < L; b++) row_w.data[b] = red_result;
     row_w_push = red_done && !sfu_w_push && (wq_cnt < WQ);        // held until the FIFO takes it
     topk_w = '0;
@@ -409,7 +415,7 @@ module vec_unit
       wq_wr <= 0; wq_rd <= 0; wq_cnt <= 0;
       op0 <= '0; op1 <= '0; partial <= '0; sfu_slice <= '0; acc_slice <= '0; exp_part_in <= '0; rowvec <= '0;
       sfu_step <= 0; sfu_busy <= 0; sfu_tag <= '0; exp_sum_pending <= 0; red_fire <= 0; red_row <= 0; topk_push <= 0;
-      red_busy <= 0; red_done <= 0; red_lvl <= 0; red_row_q <= 0; red_result <= '0;
+      red_busy <= 0; red_done <= 0; red_lvl <= 0; red_row_q <= 0; red_row_d <= 0; red_result <= '0;
       for (int n = 0; n < L; n++) red_reg[n] <= '0;
       selected <= '0; best_v <= NEG_INF; best_i <= 0; best_valid <= 0; topk_pass <= 0; topk_val_phase <= 0; topk_fire <= 0;
       count_acc <= 0; fault <= 0; fault_code <= F_NONE;
@@ -423,18 +429,22 @@ module vec_unit
       if (tag_rd) begin tagq[0] <= tagq[1]; if (tag_wr) tagq[tag_cnt - 2'd1] <= tag_in; end
       else if (tag_wr) tagq[tag_cnt] <= tag_in;
       red_fire <= 0; topk_push <= 0; exp_sum_pending <= 0;
-      // ---- row reducer: level 0 in the red_fire cycle, then RED_LEVELS - 1 more levels; the result is held ----
+      // ---- row reducer: level 0 in the red_fire cycle, then RED_LEVELS - 1 more levels; the result is held in
+      // {red_done, red_result, red_row_d} until the write FIFO takes it (the last level waits while a result is held)
       if (red_fire) begin
         for (int n = 0; n < RED_W; n++) red_reg[n] <= (kind == K_ROWMAX) ? red_max[n] : red_sum[n];
         red_busy <= 1; red_lvl <= 1; red_row_q <= red_row;
       end else if (red_busy) begin
-        for (int n = 0; n < RED_W; n++) red_reg[n] <= (kind == K_ROWMAX) ? red_max[n] : red_sum[n];
         if (red_lvl + 1 >= RED_LEVELS) begin
-          red_busy <= 0; red_done <= 1; red_result <= (kind == K_ROWMAX) ? red_max[0] : red_sum[0];
+          if (!red_done || row_w_push) begin
+            red_busy <= 0; red_done <= 1; red_result <= (kind == K_ROWMAX) ? red_max[0] : red_sum[0]; red_row_d <= red_row_q;
+          end
+        end else begin
+          for (int n = 0; n < RED_W; n++) red_reg[n] <= (kind == K_ROWMAX) ? red_max[n] : red_sum[n];
+          red_lvl <= red_lvl + 1;
         end
-        red_lvl <= red_lvl + 1;
       end
-      if (row_w_push) red_done <= 0;
+      if (row_w_push && !(red_busy && red_lvl + 1 >= RED_LEVELS)) red_done <= 0;
 
       case (st)
         // ---------------------------------------------------------- decode
