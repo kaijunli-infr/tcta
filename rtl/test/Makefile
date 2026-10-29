@@ -49,6 +49,7 @@ all:
 	$(MAKE) run PROG=gemm
 	$(MAKE) run PROG=fa
 	$(MAKE) run PROG=loop
+	$(MAKE) run PROG=gather
 	$(MAKE) run PROG=neg_leak
 	$(MAKE) run PROG=neg_deadlock
 	$(MAKE) run PROG=neg_untokened TOKEN_CHECK=1

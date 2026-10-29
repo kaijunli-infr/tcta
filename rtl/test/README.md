@@ -3,7 +3,7 @@
 ```
 make build                     # Verilate tb_top + the core (obj_dir_tc0; TOKEN_CHECK=1 -> obj_dir_tc1, FORMAL=1 -> *_formal)
 make run PROG=gemm             # run vectors/gemm and compare with the simulator's expectations
-make all                       # the nine programs below (neg_untokened with TOKEN_CHECK=1)
+make all                       # the ten programs below (neg_untokened with TOKEN_CHECK=1)
 make all FORMAL=1              # the same with the `ifdef FORMAL properties compiled as runtime assertions
 make lint                      # verilator --lint-only -Wall on the core
 python gen_vectors.py [names]  # (re)generate vectors/<name>/ from the simulator
@@ -22,6 +22,7 @@ Interpreter: `~/Projects/tilelang-cutoff/.venv/bin/python` (`PYTHON=` in the Mak
 | `gemm` | the compiler's GEMM program (`model/sweeps.fam_gemm`, `gemm_partial` fixture) | bit-exact |
 | `fa` | the compiler's flash-attention program (`fam_fa`, `flash_attn_gqa`, 4 KV tiles) | §9 row-max tolerance 2⁻⁷ against the fixture (SFU paths), `ref.npy` |
 | `loop` | front-end micro-test: VCOUNT → LOOP r, static nested loops, loop-variant `row0` (extension words) | bit-exact; its `FE DISP` trace lines feed `calibrate.py` |
+| `gather` | LOAD.IDX of f32 rows at an odd column offset (two -1 rows), of bf16 rows and of f4.r16 rows at an odd, non-16-aligned offset (both MMA B operands), STORE.IDX, an i32 STORE.2D (phase 8 K0.1) | bit-exact |
 | `neg_untokened` | second LOAD without a PUSH, the MMA reads it | fault `UNTOKENED_READ MMA 4` (needs `TOKEN_CHECK=1`) |
 | `neg_leak` | a PUSH nobody pops, then FINISH | fault `TOKEN_LEAK` |
 | `neg_deadlock` | a POP nobody pushes (`t_deadlock` 200) | fault `TOKEN_TIMEOUT` |

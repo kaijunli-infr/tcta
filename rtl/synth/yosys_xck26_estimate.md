@@ -7,39 +7,39 @@ instance counts. `own` = the module without its children; `total` = with them. N
 
 | cell | count | KV260 budget | used |
 |---|---|---|---|
-| LUT | 1296593 | 117120 | 1107.1 % |
+| LUT | 507331 | 117120 | 433.2 % |
 | MUXF | 0 |  |  |
-| FF | 78685 | 234240 | 33.6 % |
-| CARRY | 26816 |  |  |
-| DSP | 546 | 1248 | 43.8 % |
+| FF | 62271 | 234240 | 26.6 % |
+| CARRY | 25942 |  |  |
+| DSP | 489 | 1248 | 39.2 % |
 | BRAM36 | 192 | 144 | 133.3 % |
 | BRAM18 | 214 |  |  |
-| LUTRAM | 335 |  |  |
+| LUTRAM | 159 |  |  |
 | SRL | 0 |  |  |
-| other | 10853 |  |  |
+| other | 10632 |  |  |
 
-other cells: INV 10853
+other cells: INV 10632
 
 ## Per module
 
 | module | instances | own LUT | own MUXF | own FF | own CARRY | own DSP | own BRAM36 | total LUT | total MUXF | total FF | total CARRY | total DSP | total BRAM36 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| tcta_core | 1 | 8361 | 0 | 107 | 19 | 0 | 0 | 1296593 | 0 | 78685 | 26816 | 546 | 192 |
-| dma_store | 1 | 759067 | 0 | 17532 | 397 | 26 | 0 | 767643 | 0 | 17532 | 1069 | 26 | 0 |
+| tcta_core | 1 | 8361 | 0 | 107 | 19 | 0 | 0 | 507331 | 0 | 62271 | 25942 | 489 | 192 |
 | mma_unit | 1 | 23124 | 0 | 6699 | 1300 | 54 | 0 | 290180 | 0 | 32299 | 16212 | 342 | 0 |
 | f32_add | 387 | 643 | 0 | 0 | 37 | 0 | 0 | 643 | 0 | 0 | 37 | 0 | 0 |
 | mma_pe | 256 | 33 | 0 | 100 | 0 | 0 | 0 | 929 | 0 | 100 | 52 | 1 | 0 |
 | vec_unit | 1 | 16011 | 0 | 4519 | 1091 | 2 | 0 | 122507 | 0 | 4519 | 7591 | 110 | 0 |
 | f32_mul_bf16 | 256 | 253 | 0 | 0 | 15 | 1 | 0 | 253 | 0 | 0 | 15 | 1 | 0 |
-| dma_load | 1 | 28070 | 0 | 1669 | 483 | 33 | 0 | 46758 | 0 | 1669 | 1635 | 65 | 0 |
-| f32_mul | 72 | 541 | 0 | 0 | 26 | 2 | 0 | 541 | 0 | 0 | 26 | 2 | 0 |
+| f32_mul | 56 | 541 | 0 | 0 | 26 | 2 | 0 | 541 | 0 | 0 | 26 | 2 | 0 |
 | sfu_lane | 4 | 3663 | 0 | 0 | 185 | 7 | 0 | 4847 | 0 | 0 | 248 | 9 | 0 |
+| dma_load | 1 | 5505 | 0 | 1654 | 316 | 11 | 0 | 18082 | 0 | 1654 | 1176 | 27 | 0 |
 | queue | 5 | 3184 | 0 | 3969 | 18 | 0 | 0 | 3184 | 0 | 3969 | 18 | 0 | 0 |
-| dequant_elem | 16 | 147 | 0 | 0 | 0 | 0 | 0 | 903 | 0 | 0 | 52 | 2 | 0 |
+| dequant_elem | 16 | 147 | 0 | 0 | 0 | 0 | 0 | 747 | 0 | 0 | 45 | 1 | 0 |
 | scratchpad_VEC | 1 | 10448 | 0 | 109 | 0 | 0 | 0 | 10448 | 0 | 109 | 0 | 0 | 0 |
 | scratchpad_ACC | 1 | 9687 | 0 | 77 | 0 | 0 | 96 | 9687 | 0 | 77 | 0 | 0 | 96 |
 | scratchpad_STATE | 1 | 9676 | 0 | 13 | 0 | 0 | 32 | 9676 | 0 | 13 | 0 | 0 | 32 |
-| f32_to_int_trunc | 32 | 241 | 0 | 0 | 12 | 0 | 0 | 241 | 0 | 0 | 12 | 0 | 0 |
+| dma_store | 1 | 2096 | 0 | 1133 | 162 | 7 | 0 | 7057 | 0 | 1133 | 654 | 7 | 0 |
+| f32_mul_e4m3 | 16 | 385 | 0 | 0 | 19 | 1 | 0 | 385 | 0 | 0 | 19 | 1 | 0 |
 | f32_max | 47 | 123 | 0 | 0 | 19 | 0 | 0 | 123 | 0 | 0 | 19 | 0 | 0 |
 | scratchpad_WGT | 1 | 5560 | 0 | 13 | 0 | 0 | 64 | 5560 | 0 | 13 | 0 | 0 | 64 |
 | scratchpad_INP | 1 | 5418 | 0 | 13 | 0 | 0 | 0 | 5418 | 0 | 13 | 0 | 0 | 0 |
@@ -48,19 +48,20 @@ other cells: INV 10853
 | front_end | 1 | 2872 | 0 | 1812 | 183 | 3 | 0 | 2872 | 0 | 1812 | 183 | 3 | 0 |
 | f32_to_bf16 | 64 | 24 | 0 | 0 | 8 | 0 | 0 | 24 | 0 | 0 | 8 | 0 | 0 |
 | tile_meta | 1 | 1343 | 0 | 609 | 0 | 0 | 0 | 1343 | 0 | 609 | 0 | 0 | 0 |
+| f32_to_int_trunc | 2 | 241 | 0 | 0 | 12 | 0 | 0 | 241 | 0 | 0 | 12 | 0 | 0 |
 | token_net | 1 | 67 | 0 | 0 | 0 | 0 | 0 | 220 | 0 | 68 | 17 | 0 | 0 |
 | token_fifo | 17 | 9 | 0 | 4 | 1 | 0 | 0 | 9 | 0 | 4 | 1 | 0 | 0 |
 
 ## Children per module (instance counts from the blackbox cells)
 
 - tcta_core: dma_load ×1, dma_store ×1, front_end ×1, mma_unit ×1, queue ×5, scratchpad_INP ×1, scratchpad_WGT ×1, scratchpad_ACC ×1, scratchpad_VEC ×1, scratchpad_STATE ×1, tile_meta ×1, token_net ×1, vec_unit ×1
-- dma_store: f32_to_bf16 ×16, f32_to_i32_rne ×16, f32_to_int_trunc ×16
 - mma_unit: f32_add ×32, f32_mul ×16, mma_pe ×256
 - mma_pe: f32_add ×1, f32_mul_bf16 ×1
 - vec_unit: f32_add ×95, f32_max ×47, f32_mul ×36, f32_to_bf16 ×16, i32_to_f32 ×2, sfu_lane ×4
-- dma_load: dequant_elem ×16, f32_to_bf16 ×16, f32_to_int_trunc ×16
 - sfu_lane: f32_add ×1, f32_mul ×1
-- dequant_elem: f32_mul ×1, f32_to_bf16 ×1, i32_to_f32 ×1
+- dma_load: dequant_elem ×16, f32_to_bf16 ×16, f32_to_int_trunc ×1
+- dequant_elem: f32_mul_e4m3 ×1, f32_to_bf16 ×1, i32_to_f32 ×1
+- dma_store: f32_to_bf16 ×16, f32_to_i32_rne ×16, f32_to_int_trunc ×1
 - token_net: token_fifo ×17
 
 ## How to read it
@@ -68,10 +69,6 @@ other cells: INV 10853
 - `synth_xilinx -family xcup -nowidelut -noiopad -noclkbuf`, Yosys of the OSS CAD Suite with the slang
   frontend; each module once, children as blackboxes, so cross-module optimization (constant ports,
   unused outputs) is not applied: an upper bound per module, a straight sum for the core.
-- dma_store: mapped with a short abc script (strash, dretime, &if) because the default
-  abc9 call does not finish within an hour on its byte-addressed row buffer; its LUT count is therefore
-  less optimized than the others (the structure, 2048 byte registers each behind a 64-source write mux,
-  is what the number measures).
 - Block RAM: Yosys maps each scratchpad bank as a true-dual-port RAM but does not merge a port's read
   with its write, so it uses twice the bit-minimum (the five scratchpads hold 4.4 Mbit = 122 RAMB36,
   one RAMB18 counting as half); Vivado merges them. LUT-RAM cells (RAM32M16 etc.) are listed

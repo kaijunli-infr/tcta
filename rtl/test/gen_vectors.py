@@ -145,6 +145,45 @@ def prog_loop(m):
     return p, [dict(kind="bitexact")], None
 
 
+def prog_gather(m):
+    """The DMA paths the other programs do not touch (phase 8 K0.1, the slice-addressed row buffers): LOAD.IDX of
+    f32 rows at an odd column offset (two -1 rows), of bf16 rows and of f4.r16 rows at an odd, non-16-aligned
+    column offset (both as MMA B operands), STORE.IDX and an i32 STORE.2D."""
+    X = (100 * rng.standard_normal((32, 64))).astype(np.float32); m.dram_write(0, X)
+    rx = Region(0, "f32", (32, 64), (256, 4))
+    idx = np.full((1, 128), -1, np.float32)
+    idx[0, :16] = [3, 0, 31, -1, 7, 7, 12, 1, -1, 30, 2, 5, 9, 11, 13, 29]
+    m.dram_write(1 << 12, idx); ridx = Region(1 << 12, "f32", (1, 128), (512, 4))
+    B = rng.standard_normal((256, 128)); rb = put_bf16(m, 1 << 16, B)                     # 256-byte rows
+    kidx = rng.permutation(256)[:128].astype(np.float32).reshape(1, -1); m.dram_write(1 << 13, kidx)
+    ridk = Region(1 << 13, "f32", (1, 128), (512, 4))
+    C = rng.standard_normal((64, 256)).astype(np.float32)                                 # f4.r16: 128 B nibbles + 16 B scales -> 192 B rows
+    for r in range(64):
+        m.dram_write((1 << 18) + r * 192, dt.encode_f4_r16_row(C[r]))
+    rc = Region(1 << 18, "f4.r16", (64, 256), (192, 1))
+    cidx = (rng.permutation(256)[:128] % 64).astype(np.float32).reshape(1, -1); m.dram_write(1 << 14, cidx)
+    ridc = Region(1 << 14, "f32", (1, 128), (512, 4))
+    A = rng.standard_normal((64, 128)); ra = put_bf16(m, 1 << 20, A)
+    ro = Region(1 << 21, "f32", (32, 32), (128, 4)); ro2 = Region(1 << 22, "i32", (16, 32), (128, 4))
+    ro3 = Region(1 << 23, "f32", (64, 128), (512, 4)); ro4 = Region(1 << 24, "f32", (64, 128), (512, 4))
+    p = Program()
+    p.load2d(VEC(8), ridx, 1, 128)
+    p.loadidx(VEC(0), rx, VEC(8), 16, 256, 32, col0=5); p.push(Q.LOAD, Q.STORE)
+    p.load2d(VEC(9), ridk, 1, 128)
+    p.loadidx(WGT(0), rb, VEC(9), 128, 256, 128); p.push(Q.LOAD, Q.MMA)
+    p.load2d(VEC(10), ridc, 1, 128)
+    p.loadidx(WGT(1), rc, VEC(10), 128, 192, 128, col0=35); p.push(Q.LOAD, Q.MMA)
+    p.load2d(INP(0), ra, 64, 128); p.push(Q.LOAD, Q.MMA)
+    p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD)
+    p.mma(ACC(0), INP(0), WGT(0)); p.push(Q.MMA, Q.STORE)
+    p.mma(ACC(1), INP(0), WGT(1)); p.push(Q.MMA, Q.STORE)
+    p.pop(Q.STORE, Q.LOAD); p.storeidx(VEC(0), ro, VEC(8), 16, 32); p.store2d(VEC(0), ro2, 16, 32)
+    p.pop(Q.STORE, Q.MMA); p.store2d(ACC(0), ro3, 64, 128)
+    p.pop(Q.STORE, Q.MMA); p.store2d(ACC(1), ro4, 64, 128)
+    p.finish()
+    return p, [dict(kind="bitexact")], None
+
+
 def prog_neg_untokened(m):
     ra = put_bf16(m, 0, rng.standard_normal((64, 128))); rb = put_bf16(m, 1 << 16, rng.standard_normal((128, 128)))
     p = Program()
@@ -166,7 +205,7 @@ def prog_neg_deadlock(m):
     return p, [], DeviceConfig(t_deadlock=200)
 
 
-PROGRAMS = dict(dma_copy=prog_dma_copy, mma=prog_mma, vec=prog_vec, gemm=prog_gemm, fa=prog_fa, loop=prog_loop,
+PROGRAMS = dict(dma_copy=prog_dma_copy, mma=prog_mma, vec=prog_vec, gemm=prog_gemm, fa=prog_fa, loop=prog_loop, gather=prog_gather,
                 neg_untokened=prog_neg_untokened, neg_leak=prog_neg_leak, neg_deadlock=prog_neg_deadlock)
 OUT = os.path.join(HERE, "vectors")
 

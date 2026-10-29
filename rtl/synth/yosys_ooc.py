@@ -51,6 +51,7 @@ JOBS: list[tuple[str, str, dict[str, str]]] = [
     ("f32_add", "f32_add", {}),
     ("f32_mul", "f32_mul", {}),
     ("f32_mul_bf16", "f32_mul", {"MA": "7", "MB": "7"}),      # mma_pe's multiplier (BF16 mantissas)
+    ("f32_mul_e4m3", "f32_mul", {"MA": "3"}),                 # dequant_elem's multiplier (E4M3 / E2M1 value x scale)
     ("f32_max", "f32_max", {}),
     ("f32_to_bf16", "f32_to_bf16", {}),
     ("f32_to_i32_rne", "f32_to_i32_rne", {}),
@@ -59,10 +60,11 @@ JOBS: list[tuple[str, str, dict[str, str]]] = [
 ]
 SP_SLOTS = [("INP", "INP_WORDS", 16), ("WGT", "WGT_WORDS", 16), ("ACC", "ACC_WORDS", 32),
             ("VEC", "VEC_WORDS", 32), ("STATE", "STATE_WORDS", 32)]
-CHILD_VARIANT = {("mma_pe", "f32_mul"): "f32_mul_bf16"}
-# jobs mapped with a short abc script (strash; dretime; &if): dma_store's byte-addressed row buffer (2048 × 8 flops, a 64-source write mux per
-# byte and a 16-byte read window at any offset) does not finish synth_xilinx's default abc call within an hour.
-FAST_ABC = {"dma_store"}
+CHILD_VARIANT = {("mma_pe", "f32_mul"): "f32_mul_bf16", ("dequant_elem", "f32_mul"): "f32_mul_e4m3"}
+# jobs mapped with a short abc script (strash; dretime; &if) instead of synth_xilinx's default abc9 call; was
+# {"dma_store"} while its row buffer was byte-addressed (2048 x 8 flops behind 64-source write muxes: abc9 did not
+# finish within an hour). Empty since phase 8 K0.1.
+FAST_ABC: set[str] = set()
 # (parent job, child module) -> explicit list of (child job, count) replacing stat's count
 EXPLICIT_CHILDREN = {("tcta_core", "scratchpad"): [(f"scratchpad_{n}", 1) for n, _, _ in SP_SLOTS]}
 
@@ -283,10 +285,8 @@ def main() -> int:
               "- `synth_xilinx -family xcup -nowidelut -noiopad -noclkbuf`, Yosys of the OSS CAD Suite with the slang",
               "  frontend; each module once, children as blackboxes, so cross-module optimization (constant ports,",
               "  unused outputs) is not applied: an upper bound per module, a straight sum for the core.",
-              f"- {', '.join(sorted(FAST_ABC))}: mapped with a short abc script (strash, dretime, &if) because the default",
-              "  abc9 call does not finish within an hour on its byte-addressed row buffer; its LUT count is therefore",
-              "  less optimized than the others (the structure, 2048 byte registers each behind a 64-source write mux,",
-              "  is what the number measures).",
+              *([f"- {', '.join(sorted(FAST_ABC))}: mapped with a short abc script (strash, dretime, &if) instead of the",
+                 "  default abc9 call; their LUT counts are less optimized than the others."] if FAST_ABC else []),
               "- Block RAM: Yosys maps each scratchpad bank as a true-dual-port RAM but does not merge a port's read",
               "  with its write, so it uses twice the bit-minimum (the five scratchpads hold 4.4 Mbit = 122 RAMB36,",
               "  one RAMB18 counting as half); Vivado merges them. LUT-RAM cells (RAM32M16 etc.) are listed",

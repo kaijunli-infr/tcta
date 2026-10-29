@@ -67,7 +67,7 @@ module dequant_elem
       default: s = 32'h3f800000;
     endcase
   end
-  f32_mul u_mul (.a(v), .b(s), .y(prod));
+  f32_mul #(.MA(3)) u_mul (.a(v), .b(s), .y(prod));     // v: E4M3 / E2M1, at most 3 fraction bits
   f32_to_bf16 u_bf (.x(prod), .y(bf));
   i32_to_f32 u_i2f (.x($signed(raw)), .y(i2f));
   always_comb begin
