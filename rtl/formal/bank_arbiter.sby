@@ -1,6 +1,8 @@
 # The scratchpad's two-port bank arbiter (scratchpad.sv): never two writers in a cycle, at most one port per
 # client, the highest-priority requester always granted, two pure reads at the top both granted.
 # Memory is abstracted by Yosys (the banks are left as RAM cells; the properties are on the grant logic).
+# The packages need the slang front end (yosys-slang, in the OSS CAD Suite); the native parser stops at
+# tcta_isa_pkg.sv's typed localparams.
 [options]
 mode bmc
 depth 24
@@ -9,8 +11,8 @@ depth 24
 smtbmc yices
 
 [script]
-read -formal -sv tcta_isa_pkg.sv tcta_pkg.sv scratchpad.sv
-chparam -set WORDS 16 scratchpad
+plugin -i slang
+read_slang -D FORMAL -G WORDS=16 --top scratchpad tcta_isa_pkg.sv tcta_pkg.sv scratchpad.sv
 prep -top scratchpad
 memory_map
 

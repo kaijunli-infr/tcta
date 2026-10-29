@@ -10,3 +10,7 @@ rtl/test/vectors/*/dram.hex
 rtl/test/vectors/*/expect_dram.hex
 rtl/test/vectors/*/dram_out.hex
 rtl/test/vectors/*/sp_dump.txt
+rtl/formal/token_fifo/
+rtl/formal/bank_arbiter/
+rtl/synth/yosys_xck26.log
+rtl/synth/ooc/

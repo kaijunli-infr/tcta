@@ -48,15 +48,27 @@ module scratchpad
   end
 
   // ---- banks ----
+  // Written for block-RAM inference (Yosys synth_xilinx, phase 7 J7): one process per port, so the two write
+  // ports have no priority relation (the arbiter never grants two writes in a cycle, formal property below), a
+  // DW-wide read register per bank and port (the RAM's output register), and no read-during-write check across
+  // ports (no_rw_check: a read and a write of the same word in one cycle on different ports is a stale read in
+  // this design, ISA §8.4). The single-process form mapped to 7680 LUT-RAM cells and 34 k LUTs for the ACC pad.
   logic [DW-1:0] rA [BANKS], rB [BANKS];
   for (genvar b = 0; b < BANKS; b++) begin : g_bank
-    logic [DW-1:0] mem [WORDS];
-    always_ff @(posedge clk) begin
-      rA[b] <= mem[pA_addr[b]];
-      rB[b] <= mem[pB_addr[b]];
+    /* verilator lint_off MULTIDRIVEN */
+    (* ram_style = "block", no_rw_check *) logic [DW-1:0] mem [WORDS];
+    /* verilator lint_on MULTIDRIVEN */
+    logic [DW-1:0] qA, qB;
+    always @(posedge clk) begin
+      qA <= mem[pA_addr[b]];
       if (pA_valid && pA_we && pA_ben[b]) mem[pA_addr[b]] <= pA_wdata[b][31 -: DW];
+    end
+    always @(posedge clk) begin
+      qB <= mem[pB_addr[b]];
       if (pB_valid && pB_we && pB_ben[b]) mem[pB_addr[b]] <= pB_wdata[b][31 -: DW];
     end
+    assign rA[b] = qA;
+    assign rB[b] = qB;
   end
   always_comb begin
     for (int b = 0; b < BANKS; b++) begin

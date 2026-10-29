@@ -20,7 +20,8 @@ rtl/
               vectors/<program>/, fp/ (FP library unit test); see test/README.md
   formal/     SymbiYosys jobs (token_fifo.sby, bank_arbiter.sby, depth 24); the properties live in token_fifo.sv
               and scratchpad.sv under `ifdef FORMAL (also compiled as runtime assertions by `make all FORMAL=1`)
-  synth/      Yosys synth_xilinx estimate (yosys_xck26.ys, needs yosys-slang) and the Vivado out-of-context
+  synth/      Yosys synth_xilinx estimate: yosys_ooc.py (per module, children blackboxed; writes
+              yosys_xck26_estimate.md), yosys_xck26.ys (whole design, needs > 16 GB), and the Vivado out-of-context
               scripts for the KV260 part (vivado_ooc.tcl, vivado_ooc.xdc: 200 MHz)
 ```
 
@@ -80,7 +81,8 @@ cycle, at most one of them writing, fixed priority MMA A, MMA B (always
 granted, so the array never stalls), MMA writeback, VEC read, VEC write, LOAD,
 STORE; a request is one whole row slice (all banks, one element each) and a
 losing client retries. The MMA's skew makes every operand fetch hit 16
-distinct banks. Properties (`ifdef FORMAL`): never two writers, at most one
+distinct banks. Each bank is written for block-RAM inference (one process per port, a
+read register per bank and port, `no_rw_check`; J7). Properties (`ifdef FORMAL`): never two writers, at most one
 port per client, the highest-priority requester always granted, two pure
 reads at the top both granted. Per-slot metadata (`rows`, `cols`, `pready`;
 `tile_meta.sv`, three write ports) is what the units read for operand
@@ -188,11 +190,28 @@ alignment logic outside the core).
 
 ## 5. Toolchain
 
-Verilator 5.052 (pacman). The formal and synthesis flows need Yosys (with
-`yosys-smtbmc` and the `slang` frontend plugin for the SystemVerilog sources)
-and SymbiYosys; the distro `yosys 0.54-3` does not load on this machine
-(linked against boost 1.89, installed boost-libs 1.92) and `sby` is not
-packaged, so J6 and the Yosys estimate of J7 are pending a working install
-(the OSS CAD Suite build under `~/.local/opt/oss-cad-suite` has them). Vivado
-runs on x86: `vivado -mode batch -source rtl/synth/vivado_ooc.tcl` from the
-repo root writes `rtl/synth/vivado/{utilization,timing}.rpt`.
+Verilator 5.052 (pacman). The formal and synthesis flows need Yosys with
+`yosys-smtbmc`, the `slang` frontend plugin (the packages use typed
+localparams the native parser rejects) and SymbiYosys; the distro `yosys
+0.54-3` does not load on this machine (linked against boost 1.89, installed
+boost-libs 1.92) and `sby` is not packaged, so both ran from the OSS CAD Suite
+(linux-arm64 2026-10-26, Yosys 0.70+221) under `~/.local/opt/oss-cad-suite/bin`:
+
+```
+export PATH=~/.local/opt/oss-cad-suite/bin:$PATH
+cd rtl/formal && sby -f token_fifo.sby && sby -f bank_arbiter.sby   # BMC depth 24, both PASS
+python rtl/synth/yosys_ooc.py -j 4                                  # from the repo root -> rtl/synth/yosys_xck26_estimate.md
+```
+
+The whole-design script (`yosys_xck26.ys`) needs more memory than this machine
+has: yosys-slang flattens the design, and with `--keep-hierarchy` it emits one
+module per instance (256 `mma_pe`, 387 `f32_add`), 11 GB before synthesis
+starts and swapping in ABC. `yosys_ooc.py` synthesizes each distinct module
+(and parameterization) once with the other modules as blackbox stubs generated
+from their headers, and sums the hierarchy from the instance counts.
+
+The BMC starts from an arbitrary state, so the FIFO properties assume reset
+in the first cycle and check from the second (`f_past_valid`); the arbiter's
+are purely combinational. Vivado runs on x86: `vivado -mode batch -source
+rtl/synth/vivado_ooc.tcl` from the repo root writes
+`rtl/synth/vivado/{utilization,timing}.rpt`.

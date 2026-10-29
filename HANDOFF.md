@@ -18,8 +18,10 @@ PASS-WITH-CAVEATS** — GEMM bit-exact and FA within §9 on the RTL under
 Verilator with the compiler's programs unchanged, the three negative tests
 fault with the simulator's codes, the cycle model is within 0.3 % of the RTL
 after calibration (but only with rule changes: the v0 core is row-serial in
-its DMA and VEC vectors, report below); the SymbiYosys proof and the
-synthesis numbers are pending a working Yosys on this machine.
+its DMA and VEC vectors, report below), the SymbiYosys proofs pass; but the
+Yosys synthesis estimate is 1.30 M LUTs against the KV260's 117 k (11×): the
+byte-addressed STORE row buffer, the 256 binary32 accumulators of the array
+and the unshared VEC arithmetic. Fmax is still open (Vivado, x86).
 
 ## Phase 7 in one paragraph
 
@@ -41,9 +43,13 @@ PUSH/POP words counted, 16-deep instruction queues, PUSH visible one cycle
 later, MMA drain 56/88 (plan 8), accumulate writeback-bound at K ≤ 64 — and
 `tcta.timing.KV260` now carries that structure (`rtl_rules`) with every
 constant measured; `KV260_PLAN` keeps the planning descriptor for the
-phase-5/6 tables. Formal properties (token FIFO, bank arbiter) are written
-and pass as runtime assertions on all nine programs; the BMC itself and the
-Yosys/Vivado synthesis need the toolchain (below).
+phase-5/6 tables. Formal: SymbiYosys BMC depth 24 passes on the token FIFO
+(6 assertions) and the bank arbiter (18), and the same properties run as
+assertions on all nine programs. Synthesis: a per-module Yosys
+`synth_xilinx` estimate (`rtl/synth/yosys_ooc.py`,
+`rtl/synth/yosys_xck26_estimate.md`) puts the core at 1.30 M LUTs, 79 k FFs,
+546 DSPs, scratchpads in block RAM; the KV260 has 117 k LUTs. Vivado timing
+needs an x86 machine (`rtl/synth/vivado_ooc.tcl`).
 
 ## What to read first
 
@@ -66,8 +72,8 @@ Yosys/Vivado synthesis need the toolchain (below).
 | J3 | `rtl/test/{tb_top.sv,tb_main.cpp,Makefile,compare.py,gen_vectors.py}`, `vectors/<program>/` | done |
 | J4 | GEMM bit-exact, FA within §9 (4.03e-3 ≤ 7.81e-3), negative tests TOKEN_LEAK / TOKEN_TIMEOUT / UNTOKENED_READ (`TOKEN_CHECK=1`) | PASS |
 | J5 | `sim/tcta/timing.py` (`KV260` measured, `KV260_PLAN`), `sim/tcta/cycle.py` (`rtl_rules`), `rtl/test/calibrate.py`, `docs/calibration-report.md`, `tests/test_cycle.py` (+1) | GEMM −0.0 %, FA +0.3 % |
-| J6 | `rtl/formal/{token_fifo,bank_arbiter}.sby`, properties under `ifdef FORMAL`; `make all FORMAL=1` passes | BMC pending toolchain |
-| J7 | verdict Phase 7 section; `rtl/synth/yosys_xck26.ys`, `vivado_ooc.tcl`, `vivado_ooc.xdc` | section done; synthesis pending |
+| J6 | `rtl/formal/{token_fifo,bank_arbiter}.sby`, properties under `ifdef FORMAL`; `make all FORMAL=1` passes | PASS (sby BMC depth 24, both jobs) |
+| J7 | verdict Phase 7 section; `rtl/synth/yosys_ooc.py` → `yosys_xck26_estimate.md`, `yosys_xck26.ys`, `vivado_ooc.tcl`, `vivado_ooc.xdc` | estimate done: 11× the KV260 LUTs (FAIL on fit); Fmax pending Vivado |
 | E1 | `isa/isa-v0.1.md` §16, `sim/tcta/isa.py` (`sum_lanes`), `sim/tcta/machine.py` (`_mma_sum`, `_row_sum`), `tests/test_sim.py` | done |
 
 ## Key numbers (v1 KV260 core, RTL cycles, 24-cycle harness memory latency)
@@ -84,10 +90,24 @@ Yosys/Vivado synthesis need the toolchain (below).
   1927 (plan 3072).
 - Front end: 3 cycles per word (PUSH/POP too), extension word 2 + 1 per
   entry (+1 per `_mod`), LOOP/ENDLOOP 2, LOOP r 1 + ⌈R/step⌉ after VCOUNT.
+- Synthesis (Yosys, cells only): core 1 296 593 LUT / 78 685 FF / 546 DSP;
+  `dma_store` 767 643 LUT, `mma_unit` 290 180 (PE 929: f32_add 643, BF16
+  mul 253 + 1 DSP), `vec_unit` 122 507, `dma_load` 46 758, scratchpads
+  40 789 LUT + block RAM (4.4 Mbit, 122 RAMB36 minimum, Yosys uses 2×).
+  KV260: 117 120 LUT, 234 240 FF, 1 248 DSP, 144 RAMB36, 64 URAM.
 
 ## Decisions taken while implementing (phase 7)
 
-- SystemVerilog over Chisel (Kevin); both synthesis routes (Kevin).
+- SystemVerilog over Chisel (Kevin); both synthesis routes (Kevin); the OSS
+  CAD Suite binaries for Yosys/sby after the distro package proved broken
+  (Kevin).
+- Scratchpad banks rewritten for block-RAM inference (one process per port,
+  a read register per bank and port, `no_rw_check`) after the single-process
+  form synthesized to LUT-RAM; behavior unchanged (nine programs, arbiter
+  proof). The synthesis estimate is per module with blackboxed children
+  because yosys-slang uniquifies every instance and the whole core needs
+  > 16 GB; `dma_store` is mapped by a short abc script (default abc9 did not
+  finish in an hour on its row buffer).
 - Numerics: erratum E1 fixes the MMA k-sum (sequential from +0, products
   rounded first, mask, then + old) and the row-sum order (16 lane partials,
   binary tree) in the ISA and the simulator so that the RTL is bit-exact
@@ -114,13 +134,13 @@ Yosys/Vivado synthesis need the toolchain (below).
 
 ## Environment
 
-- No GPU, aarch64 (Arch). Interpreter: `~/Projects/tilelang-cutoff/.venv/bin/python`
+- No GPU, aarch64 (Arch), 16 GB. Interpreter: `~/Projects/tilelang-cutoff/.venv/bin/python`
   (tilelang 0.1.15, Python 3.14). Verilator 5.052 (pacman). Yosys 0.54-3
   from pacman does not load (built against boost 1.89, boost-libs is 1.92);
-  `sby` and `yosys-slang` are not packaged. A prebuilt OSS CAD Suite
-  (linux-arm64, 2026-10-26) with all of them is unpacked at
-  `~/.local/opt/oss-cad-suite/bin` but was not run in this session. Vivado:
-  x86 only.
+  `sby` and `yosys-slang` are not packaged. Formal and synthesis use the
+  prebuilt OSS CAD Suite (linux-arm64 2026-10-26: Yosys 0.70+221, sby,
+  yices, slang) at `~/.local/opt/oss-cad-suite/bin` (prepend to `PATH`).
+  Vivado: x86 only.
 - Run everything: `python -m pytest tests -q` (~65 s); `make -C rtl/test
   all` (~10 min incl. two Verilator builds); `make -C rtl/test lint`;
   `python rtl/test/calibrate.py`.
@@ -128,17 +148,20 @@ Yosys/Vivado synthesis need the toolchain (below).
   `make -C rtl/test vectors`), `python rtl/gen_pkg.py` (after an `encode.py`
   change), `python ref/kernels.py fixtures`, `python compiler/prototype/dump_programs.py`,
   `python model/sweeps.py` (phase-5 tables, `KV260_PLAN`), `python model/sweeps_mlp.py`.
-- Formal (once Yosys + sby work): `cd rtl/formal && sby -f token_fifo.sby
-  && sby -f bank_arbiter.sby`. Synthesis: `yosys -s rtl/synth/yosys_xck26.ys`
-  (needs the slang plugin); `vivado -mode batch -source rtl/synth/vivado_ooc.tcl`.
+- Formal: `cd rtl/formal && sby -f token_fifo.sby && sby -f bank_arbiter.sby`
+  (~5 s). Synthesis estimate: `python rtl/synth/yosys_ooc.py -j 4` (~15 min;
+  `dma_store` is the long job); `vivado -mode batch -source rtl/synth/vivado_ooc.tcl`
+  on x86 for timing.
 
 ## Not done / out of scope
 
-J6's bounded model check and J7's synthesis numbers (toolchain, above).
-Phase 8: MoE/MLA/KDA on the RTL (mechanical through `gen_vectors.py`; they
-measure the gather path, VTOPK, VGATE/VMASK/VSEL and the dequant formats the
-calibration takes from the FSMs), the RTL items the calibration surfaced (row
-prefetch / pipelined DMA, column-vector layout, SFU slice pipelining,
-pipelined accumulate writeback), COMM, multi-core, AXI/DDR, the board, power,
-ASIC synthesis. Open for the main session from phase 6: the arbiter's grant
+Fmax (Vivado on x86). Making the core fit the KV260: the STORE row buffer as
+a RAM, the array's accumulator format/size, shared VEC arithmetic, URAM for
+the large scratchpads (verdict finding 8; plan-level decisions for the main
+session). Phase 8: MoE/MLA/KDA on the RTL (mechanical through
+`gen_vectors.py`; they measure the gather path, VTOPK, VGATE/VMASK/VSEL and
+the dequant formats the calibration takes from the FSMs), the RTL items the
+calibration surfaced (row prefetch / pipelined DMA, column-vector layout, SFU
+slice pipelining, pipelined accumulate writeback), COMM, multi-core, AXI/DDR,
+the board, power, ASIC synthesis. Open for the main session from phase 6: the arbiter's grant
 policy (convoy), `sfu_lanes`, request-burst queueing at 4 cores.

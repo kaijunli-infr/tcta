@@ -31,18 +31,25 @@ module token_fifo #(parameter int DEPTH = 8) (
   end
 `ifdef FORMAL
   // counting tokens: the count equals pushes - pops accepted so far and stays within [0, DEPTH]
+  // The BMC starts from an arbitrary state: reset is assumed asserted in the first cycle and the properties are
+  // checked from the second cycle on (f_past_valid), so step 0's unconstrained flops are not a counterexample.
   logic [31:0] n_push, n_pop;
+  logic f_past_valid = 1'b0;
+  initial assume (!rst_n);
+  always_ff @(posedge clk) f_past_valid <= 1'b1;
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin n_push <= 0; n_pop <= 0; end
     else begin n_push <= n_push + {31'd0, push_ok}; n_pop <= n_pop + {31'd0, pop_ok}; end
   end
   always_comb begin
-    assert (count <= DEPTH);
-    assert (32'(count) == n_push - n_pop);
-    assert (!(full && push_ok));
-    assert (!(empty && pop_ok));
-    assert (!(push && !full) || push_ok);    // a push into a non-full FIFO is never dropped
-    assert (!(pop && !empty) || pop_ok);     // a pop from a non-empty FIFO is never refused
+    if (f_past_valid) begin
+      assert (count <= DEPTH);
+      assert (32'(count) == n_push - n_pop);
+      assert (!(full && push_ok));
+      assert (!(empty && pop_ok));
+      assert (!(push && !full) || push_ok);    // a push into a non-full FIFO is never dropped
+      assert (!(pop && !empty) || pop_ok);     // a pop from a non-empty FIFO is never refused
+    end
   end
 `endif
 endmodule

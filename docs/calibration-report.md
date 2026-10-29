@@ -158,7 +158,8 @@ to arbitration); with the planning ports the model serialized the two.
 
 ### 1.6 Not changed
 
-`f_mhz` 200 (the plan's clock; J7's synthesis number replaces it),
+`f_mhz` 200 (the plan's clock, still a target: the J7 Yosys estimate gives
+cell counts, not timing, and the Vivado run is pending an x86 machine),
 `mac_rows/cols` 16, `vec_lanes` 16, `sfu_lanes` 4, `fifo_depth` 8, one read
 and one write channel, `request_channels` 1, `operand_broadcast` False (one
 array), COMM link values (not built).

@@ -919,7 +919,7 @@ Code touched outside `rtl/`: `sim/tcta/{isa,machine}.py` (E1 orders),
 `KV260_PLAN`), `tests/test_{sim,cycle}.py`, `model/sweeps.py` (pinned to
 `KV260_PLAN`), `isa/isa-v0.1.md` (§16 E1).
 
-## Verdict: PASS-WITH-CAVEATS (J6 and the synthesis half of J7 pending the toolchain)
+## Verdict: PASS-WITH-CAVEATS (conformance and calibration pass; the v0 core as built does not fit the KV260)
 
 Per §3 of the task:
 
@@ -943,22 +943,45 @@ Per §3 of the task:
   sharing the banks). With the planning rules the model is 28–50 % under
   the RTL. Every constant is measured (report §1); the planning descriptor
   survives as `KV260_PLAN`.
-- **J6 not concluded (toolchain).** The properties exist (`token_fifo.sv`,
-  `scratchpad.sv` under `ifdef FORMAL`), the SymbiYosys jobs are written
-  (depth 24, yices), but the distro `yosys 0.54-3` does not load (boost ABI)
-  and `sby` is not installed; the prebuilt OSS CAD Suite on the machine was
-  not to be executed. Evidence short of a proof: all nine programs run with
-  the properties as runtime assertions (`make all FORMAL=1`), no violation
-  in 157 000 simulated cycles of seven-client arbitration and token traffic.
-  A FAIL condition (a counterexample on `TokenFifo`) has therefore not been
-  ruled out formally; nothing points at one.
-- **J7 synthesis not run.** `rtl/synth/yosys_xck26.ys` needs the same
-  Yosys plus `yosys-slang`; `rtl/synth/vivado_ooc.tcl` + `.xdc` (part
-  `xck26-sfvc784-2LV-c`, 200 MHz) are ready for an x86 machine with Vivado.
-  Fmax and LUT/DSP/BRAM/URAM against the budget are open; the design has
-  single-cycle binary32 add/multiply paths (mma_pe, the VEC lanes) and
-  32-entry combinational SFU interpolation, which is where 200 MHz will be
-  decided.
+- **J6 PASS.** SymbiYosys BMC (smtbmc + yices, OSS CAD Suite Yosys
+  0.70+221), depth 24 ≥ the required bound, both jobs `DONE (PASS)`:
+  `token_fifo` (DEPTH 8; 6 assertions: count = pushes − pops, count ≤
+  DEPTH, no accepted push when full / pop when empty, no dropped push into a
+  non-full FIFO, no refused pop from a non-empty one) and `bank_arbiter`
+  (`scratchpad` with WORDS 16, 18 assertions: one writer per cycle, at most
+  one port per client, the highest-priority requester granted, two pure
+  reads both granted). Two harness-side fixes were needed, no RTL change: the
+  FIFO's first run failed at step 0 on the unconstrained initial flops (no
+  reset had been applied), so the properties now assume reset in the first
+  cycle and check from the second (`f_past_valid`, the usual idiom); the
+  arbiter job reads the sources through the `slang` plugin because Yosys's
+  own parser stops at the packages. The same properties still pass as
+  runtime assertions on the nine programs (`make all FORMAL=1`).
+- **J7 synthesis: estimate done, FAIL against the KV260 budget.** Yosys
+  `synth_xilinx` (UltraScale+ cells, no placement, no timing), per module
+  with the children blackboxed and the hierarchy summed
+  (`rtl/synth/yosys_ooc.py` → `rtl/synth/yosys_xck26_estimate.md`; the
+  whole-design script needs more than this machine's 16 GB): **1.30 M LUTs
+  against 117 k (11×)**, 79 k FFs (34 %), 546 DSP48E2 (44 %), scratchpads in
+  block RAM at 2× the 122-RAMB36 bit-minimum because Yosys does not merge a
+  port's read with its write (144 on the part; Vivado merges). Where the LUTs
+  are: `dma_store` 768 k (59 %: the byte-addressed 2 KB row buffer is 16 k
+  flops each behind a 64-source write mux), `mma_unit` 290 k (22 %: 256 PEs
+  × 929 LUTs, of which a single-cycle binary32 adder is 643 and the BF16
+  multiplier 253 + 1 DSP), `vec_unit` 123 k (95 binary32 adders, 36
+  multipliers, 47 max units and the four SFU lanes, each 4.8 k), `dma_load`
+  47 k (the beat-indexed row buffer and its read window, 16 dequant paths),
+  the five scratchpads 41 k of port muxing, the five queues 16 k. Even with
+  `dma_store` rewritten around a RAM, the arithmetic alone (MMA + VEC, 413 k)
+  is 3.5× the fabric: a 16×16 output-stationary array with binary32
+  accumulators in LUTs does not fit a K26. No Fmax: Yosys gives no timing and
+  Vivado (`rtl/synth/vivado_ooc.tcl`, part `xck26-sfvc784-2LV-c`, 200 MHz)
+  needs an x86 machine; the single-cycle f32 add (643 LUTs, 37 CARRY8) is the
+  path that will decide it. One RTL change came out of this: the scratchpad
+  bank was rewritten for block-RAM inference (one process per port, a read
+  register per bank and port, `no_rw_check`; the earlier form mapped to
+  7 680 LUT-RAM cells + 34 k LUTs for the ACC pad alone); all nine programs
+  and the arbiter proof pass unchanged on it.
 
 ## The numbers in one table (v1 KV260 core, RTL cycles at the harness's 24-cycle memory latency)
 
@@ -1015,9 +1038,31 @@ Per §3 of the task:
    with `K = 0` is BAD_SHAPE; SEND/RECV are BAD_OPCODE (COMM stub); the
    `np.maximum` ±0 tie rule (`+0`) is what `f32_max` implements, so VROWMAX
    is bit-exact.
-8. **Toolchain**: formal and synthesis wait on a working Yosys (the distro
-   package is broken against boost 1.92; `sby` is not packaged). The jobs
-   and scripts are ready; `make all FORMAL=1` is the simulation evidence.
+8. **The v0 core is ~11× the KV260's LUTs; three structures account for it.**
+   (a) `dma_store`'s byte-addressed row buffer (759 k LUTs): the slice
+   converters write up to 64 bytes per cycle at an arbitrary byte offset into
+   2 048 byte registers. The fix is a beat-organized buffer written one
+   aligned 16-byte beat per cycle (as `dma_load` already does, 28 k) or
+   streaming the converted slice straight to the bus. (b) The array: 256 ×
+   (binary32 adder 643 + BF16 multiplier 253 + 33) = 238 k. UltraScale+ has
+   no floating-point DSP, so an f32 accumulator costs ~650 LUTs per PE; the
+   options are a smaller array (8×8 = 60 k), BF16/fixed-point accumulation
+   with periodic f32 conversion, or a 2-cycle pipelined adder shared by two
+   PEs at half the rate. This is a plan-level decision: `mac_rows/cols` 16
+   with f32 accumulate was the phase-5 assumption. (c) `vec_unit` keeps a
+   separate adder, subtractor, multiplier, max and gate path per lane (95
+   adders, 61 k LUTs): one shared adder and multiplier per lane behind an
+   opcode mux is 16 of each (~20 k). Independent of the fit, the scratchpads (4.4 Mbit) are 85 %
+   of the part's block RAM; the two larger ones (WGT 1 Mbit, ACC 1.5 Mbit)
+   belong in URAM.
+9. **Toolchain**: the distro Yosys is broken against boost 1.92 and `sby`
+   is not packaged; formal and the Yosys estimate ran from the OSS CAD Suite
+   (`~/.local/opt/oss-cad-suite/bin`, Kevin's go-ahead). The SystemVerilog
+   sources need the `slang` frontend in Yosys (packages with typed
+   localparams); yosys-slang flattens by default and uniquifies per instance
+   with `--keep-hierarchy`, so the whole core needs > 16 GB and the estimate
+   is per module (`yosys_ooc.py`), with `dma_store` mapped by a short abc
+   script because the default abc9 call did not finish in an hour on it.
 
 ## Calibration (what the plan should now carry for the v1 core)
 
@@ -1025,6 +1070,25 @@ Per §3 of the task:
 lists every value with the trace it came from and §2 what still differs
 (the accumulate handshake, ±1-cycle per-instruction overheads, cycle- vs
 instruction-granular port arbitration, the gather and VTOPK formulas taken
-from the FSMs, the harness's 24-cycle memory latency). `f_mhz` stays 200
-until synthesis says otherwise. Phase 8 (MoE/MLA/KDA on RTL) measures the
-gather path, VTOPK, VGATE/VMASK/VSEL and the dequant formats.
+from the FSMs, the harness's 24-cycle memory latency). `f_mhz` stays 200 as
+a target: Yosys gives no timing and the Vivado run is pending an x86
+machine, so the cycle counts above are not yet seconds. Phase 8 (MoE/MLA/KDA
+on RTL) measures the gather path, VTOPK, VGATE/VMASK/VSEL and the dequant
+formats.
+
+## Synthesis estimate (Yosys synth_xilinx, UltraScale+ cells, per module, no timing)
+
+| | LUT | FF | DSP48E2 | RAMB36 (Yosys / bit-minimum) |
+|---|---|---|---|---|
+| **tcta_core** | **1 296 593** | 78 685 | 546 | 299 / 122 |
+| `dma_store` (byte row buffer) | 767 643 | 17 532 | 26 | |
+| `mma_unit` (256 PEs × 929 + mask/accumulate 32 adders, 16 multipliers) | 290 180 | 32 299 | 342 | |
+| `vec_unit` (16 lanes, 4 SFU lanes) | 122 507 | 4 519 | 110 | |
+| `dma_load` | 46 758 | 1 669 | 65 | |
+| scratchpads INP/WGT/ACC/VEC/STATE (port muxing) | 40 789 | 225 | | 299 / 122 |
+| queues ×5, front end, tile_meta, token net, core glue | 28 716 | 22 441 | 3 | |
+| KV260 (XCK26) | 117 120 | 234 240 | 1 248 | 144 (+ 64 URAM) |
+
+Leaf cells: `f32_add` 643 LUT / 37 CARRY8, `f32_mul` 541 + 2 DSP, the BF16
+`f32_mul` of the PE 253 + 1 DSP, `f32_max` 123, `sfu_lane` 4 847 + 9 DSP,
+`mma_pe` 929 + 100 FF, `queue` 3 184 + 3 969 FF, `token_fifo` 9 + 4 FF.
