@@ -84,6 +84,12 @@ GROUPS = [("LUT", LUTS), ("MUXF", {"MUXF7", "MUXF8"}), ("FF", FFS), ("CARRY", {"
                       "RAM256X1D", "RAM32X1S", "RAM64X1S", "RAM128X1S", "RAM256X1S", "RAM512X1S", "RAM32X2S",
                       "RAM64X2S"}),
           ("SRL", {"SRL16E", "SRLC32E"})]
+# LUT6 equivalents of the LUT-RAM cells (the fit budget counts them with the LUTs): RAM32M16 / RAM64M8 are eight
+# LUT6, RAM32M / RAM64M four, the X1D / X2S forms two (one LUT6 per bit, read and write halves), the deeper
+# single-bit forms their LUT6 count plus the F7/F8 muxes they need.
+LUTRAM_EQ = {"RAM32M16": 8, "RAM64M8": 8, "RAM32M": 4, "RAM64M": 4, "RAM32X1D": 2, "RAM64X1D": 2, "RAM128X1D": 4,
+             "RAM256X1D": 8, "RAM32X1S": 1, "RAM64X1S": 1, "RAM128X1S": 2, "RAM256X1S": 4, "RAM512X1S": 8,
+             "RAM32X2S": 2, "RAM64X2S": 2}
 # KV260 (K26 SOM, XCK26-SFVC784-2LV-C): the xczu5ev-class fabric
 BUDGET = {"LUT": 117120, "FF": 234240, "DSP": 1248, "BRAM36": 144}
 
@@ -293,16 +299,24 @@ def main() -> int:
     for k in cols:
         b = BUDGET.get(k)
         lines.append(f"| {k} | {core[k]} | {b if b else ''} | {f'{100 * core[k] / b:.1f} %' if b else ''} |")
+
+    def lut_eq(c: dict[str, int]) -> int:
+        return sum(v for t, v in c.items() if t in LUTS) + sum(LUTRAM_EQ.get(t, 0) * v for t, v in c.items())
+
+    eq = lut_eq(total("tcta_core"))
+    lines.append(f"| **LUT-eq** (LUT + LUT-RAM as LUT6) | **{eq}** | {BUDGET['LUT']} | **{100 * eq / BUDGET['LUT']:.1f} %** |")
     others = {t: v for t, v in total("tcta_core").items() if t not in set().union(*(ty for _, ty in GROUPS))}
     if others:
         lines += ["", "other cells: " + ", ".join(f"{t} {v}" for t, v in sorted(others.items()))]
-    lines += ["", "## Per module", "", "| module | instances | " + " | ".join(f"own {c}" for c in cols[:6]) + " | " +
-              " | ".join(f"total {c}" for c in cols[:6]) + " |", "|---|---|" + "---|" * 12]
+    lines += ["", "## Per module", "", "| module | instances | " + " | ".join(f"own {c}" for c in cols[:6]) +
+              " | own LUTRAM | own LUT-eq | " + " | ".join(f"total {c}" for c in cols[:6]) + " | total LUTRAM | total LUT-eq |",
+              "|---|---|" + "---|" * 16]
     order = sorted(cells, key=lambda j: -grouped(total(j))["LUT"] * inst.get(j, 0))
     for job in order:
         o, t = grouped(own(job)), grouped(total(job))
-        lines.append(f"| {job} | {inst.get(job, 0)} | " + " | ".join(str(o[c]) for c in cols[:6]) + " | " +
-                     " | ".join(str(t[c]) for c in cols[:6]) + " |")
+        lines.append(f"| {job} | {inst.get(job, 0)} | " + " | ".join(str(o[c]) for c in cols[:6]) +
+                     f" | {o['LUTRAM']} | {lut_eq(own(job))} | " + " | ".join(str(t[c]) for c in cols[:6]) +
+                     f" | {t['LUTRAM']} | {lut_eq(total(job))} |")
     lines += ["", "## Children per module (instance counts from the blackbox cells)", ""]
     for job in order:
         k = children(job)
@@ -317,7 +331,7 @@ def main() -> int:
               "- Block RAM: Yosys maps each scratchpad bank as a true-dual-port RAM but does not merge a port's read",
               "  with its write, so it uses twice the bit-minimum (the five scratchpads hold 4.4 Mbit = 122 RAMB36,",
               "  one RAMB18 counting as half); Vivado merges them. LUT-RAM cells (RAM32M16 etc.) are listed",
-              "  separately and are not in the LUT column.",
+              "  separately and are not in the LUT column; LUT-eq adds them as LUT6 (RAM32M16 = 8, RAM32M = 4, ...).",
               "- Budget: K26 SOM (XCK26-SFVC784-2LV-C) 117 120 LUT6, 234 240 FF, 1 248 DSP48E2, 144 RAMB36 (5.1 Mbit),",
               "  64 URAM288 (unused by this flow). No timing: Fmax needs the Vivado run (vivado_ooc.tcl)."]
     md = ROOT / "rtl" / "synth" / "yosys_xck26_estimate.md"

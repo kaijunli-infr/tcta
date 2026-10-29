@@ -41,7 +41,10 @@ module queue
   output logic     tr_issue, output logic [5:0] tr_issue_op, output logic [31:0] tr_issue_pc,
   output logic     tr_done,  output logic [5:0] tr_done_op,  output logic [31:0] tr_done_pc
 );
-  instr_t iq [IQ_DEPTH];
+  // The buffer is LUT-RAM (phase 8 L1): one write port, two asynchronous read ports (the two heads), no reset;
+  // every use of an entry is qualified by cnt. As 16 x 241 registers behind two 16:1 read muxes it was 3.2 k LUTs
+  // and 3.9 k flops per queue.
+  (* ram_style = "distributed" *) instr_t iq [IQ_DEPTH];
   int rd, wr, cnt;
   logic inflight_q; logic [31:0] inflight_pc_q; logic [5:0] inflight_op_q;
 
@@ -75,13 +78,14 @@ module queue
     tr_done = u_done; tr_done_op = inflight_op_q; tr_done_pc = inflight_pc_q;
   end
 
+  always_ff @(posedge clk) if (dq_valid && !full) iq[wr] <= dq_ins;
+
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       rd <= 0; wr <= 0; cnt <= 0; inflight_q <= 0; inflight_pc_q <= 0; inflight_op_q <= 0;
       fault <= 0; fault_code <= F_NONE; fault_pc <= 0;
-      for (int k = 0; k < IQ_DEPTH; k++) iq[k] <= '0;
     end else begin
-      if (dq_valid && !full) begin iq[wr] <= dq_ins; wr <= (wr + 1) % IQ_DEPTH; end
+      if (dq_valid && !full) wr <= (wr + 1) % IQ_DEPTH;
       rd <= (rd + n_pop) % IQ_DEPTH;
       cnt <= cnt + ((dq_valid && !full) ? 1 : 0) - n_pop;
       if (issue) begin inflight_q <= 1; inflight_pc_q <= u_ins.pc; inflight_op_q <= u_ins.op; end

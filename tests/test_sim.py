@@ -216,6 +216,22 @@ def test_load_idx_gather_and_skip():
             assert np.allclose(got[i], bf16(table[int(idx[i])]), atol=1e-6)
 
 
+def test_mma_k_zero_faults():
+    """Erratum E6: an MMA over an empty K is BAD_SHAPE (the RTL faults on k == 0 and k > FIX_K_MAX)."""
+    m = Machine()
+    ra = put_bf16(m, 0, rng.standard_normal((64, 128)))
+    rb = put_bf16(m, 1 << 16, rng.standard_normal((128, 128)))
+    p = Program()
+    p.load2d(INP(0), ra, 64, 0); p.push(Q.LOAD, Q.MMA)
+    p.load2d(WGT(0), rb, 0, 128); p.push(Q.LOAD, Q.MMA)
+    p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD)
+    p.mma(ACC(0), INP(0), WGT(0))
+    p.finish()
+    with pytest.raises(Fault) as e:
+        m.run(p.instrs)
+    assert e.value.code == "BAD_SHAPE"
+
+
 def test_load_idx_range_fault():
     m = Machine()
     rt = Region(0, "bf16", (10, 128), (256, 2))

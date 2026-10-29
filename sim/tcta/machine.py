@@ -504,6 +504,8 @@ class Machine:
             bK, N = N, bK
         if K != bK:
             raise Fault("VALID_MISMATCH", q, ins.pc, a_valid=ats.valid, b_valid=bts.valid, transpose=transpose_b)
+        if K == 0 or (self.cfg.acc_mode == "fixed48" and K > FIX_K_MAX):   # erratum E6; the RTL's FIX_K_MAX check
+            raise Fault("BAD_SHAPE", q, ins.pc, k=K, reason="MMA K = 0, or K > 128 under fixed48 (E6)")
         Am = dt.to_bf16(ats.data[:M, :K])
         Bm = bts.data[:bK, :N] if not transpose_b else bts.data[:N, :K].T
         Bm = dt.to_bf16(Bm)
