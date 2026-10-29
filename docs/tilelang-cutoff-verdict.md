@@ -1092,3 +1092,151 @@ formats.
 Leaf cells: `f32_add` 643 LUT / 37 CARRY8, `f32_mul` 541 + 2 DSP, the BF16
 `f32_mul` of the PE 253 + 1 DSP, `f32_max` 123, `sfu_lane` 4 847 + 9 DSP,
 `mma_pe` 929 + 100 FF, `queue` 3 184 + 3 969 FF, `token_fifo` 9 + 4 FF.
+
+---
+
+# Phase 8 K0 (fit): verdict (2026-10-29)
+
+Per `docs/phase8-amendment-fit.md`: three fit fixes, each its own commit
+with the per-module Yosys number before / after, then the fit report.
+
+## Verdict: K0.1–K0.3 DONE, K0.4 FAIL on fit (2.1× the fit budget; 6.2× better than phase 7)
+
+- **K0.1 `dma_store` / `dma_load` row buffers** (71e9c4d): beat-banked
+  LUT-RAM written one converted slice per cycle, read one beat per cycle.
+  `dma_store` 767 643 → 7 057 LUT (target < 5 k for the engine: the 2 096
+  own LUTs meet it; the rest is the 16 f32→i32 converters of i32 stores),
+  `dma_load` 46 758 → 18 082. A **pre-existing bug** came out with the new
+  `gather` program (LOAD.IDX f32 with −1 rows, bf16 and f4.r16 gathers as
+  MMA operands, STORE.IDX, i32 STORE.2D): both engines read the index slice
+  with the stale `idx_cg` (−1 on the first row), so every gathered row used
+  index 0; none of the nine phase-7 programs touched the IDX paths. Ten
+  programs since.
+- **K0.2 `vec_unit` one ALU per lane** (5055321 + follow-up aba825d):
+  one adder, one multiplier, one BF16 rounder per lane, op-muxed; max is
+  the adder's subtract path; a shared four-cycle row reducer on 8 adders;
+  the sigmoid chain and VGATE decay on the lane ALUs during the SFU steps.
+  122 507 → 53 581 LUT (target < 25 k **not met**: 24 adders at 643 LUTs
+  and 16 multipliers at 541 are 24 k by themselves, the operand muxes 19 k).
+  The reducer's first pacing rule blocked a row's last slice while the
+  reducer was busy and cost 3 cycles per row on 4-slice rows — found only
+  when the calibration was rerun for K0.3 (`VROWMAX 64×64` 456 instead of
+  263, FA −2.6 % vs the model); the follow-up issues the last slice when
+  the reducer frees by the time it returns (267, the +4 being the reducer's
+  levels; `VEXP2.SUM` +1 per row for the partial add on the lane ALUs).
+  Lesson recorded: rerun `calibrate.py` with every K0 commit, not only
+  the harness.
+- **K0.3 `mma_unit` accumulator: option B taken** (0d2735f), bit-exact
+  within the day, so the decision rule did not fall back to A. The window
+  is not the per-cell running window the amendment sketched (that needs a
+  shifter and a renormalisation lag in every cell and truncates operands
+  product by product; measured 28 ulp mean) but a **per-block exponent
+  bound**: the operand fill records the largest exponent of every A row and
+  B column, each A significand is shifted once per row (`ma · 2^(15−da)`)
+  and each B significand once per column into two 9-binade levels, so a
+  cell is two DSP48E2 signed 24×18 MACs (`P = (first ? 0 : P) + M`) with
+  48-bit sums and ~7 LUTs of sticky NaN/inf flags, and the K products of an
+  output are summed exactly; one rounding to binary32 per element in a
+  converter (8 lanes, 2 cycles per row) with the block's maxima as the
+  exponent. The simulator's `acc_mode="fixed48"` (`DEVICE_KV260`) models it
+  exactly; the harness is bit-exact to it on GEMM, the MMA forms and the
+  gather test, FA within §9 against the fixture (row-max error 4.03e-3,
+  unchanged). **Erratum E5** added to `isa/isa-v0.1.md` §16 with the §9
+  note (the format is implementation-defined within §9's tolerance; the
+  simulator exposes both modes). Accuracy against E1's sequential binary32
+  sums (`tests/test_sim.py`, 64×128×128): 0.5 ulp on same-magnitude data,
+  bounded by `2^-23 · 128 · max|A row| · max|B col|` in general (A spanning
+  2^±20: mean 216 ulp = 7.7e-7 of the bound vs binary32's own 6.1e-7;
+  softmax·V 52 ulp), specials / subnormals / overflow identical. Cost:
+  `mma_unit` 290 180 → 51 781 LUT + 896 RAM32M16, DSP 342 → 537 (2 per
+  cell), FF 32 k → 29.6 k. Timing: operands are block-buffered, so the
+  first block starts `max(16·⌈K/16⌉, K) + 3` cycles after issue and blocks
+  go every `max(K, 16)` (no `ceil16`): MMA 64×128×128 4 152 → 4 284 (+3 %),
+  GEMM 50×100×96 2 718 → 2 571 (−5 %), FA QKᵀ 1 080 → 1 148, PV 1 231 →
+  1 299; the cycle model replays the unit cycle by cycle and matches every
+  shape exactly (`docs/calibration-report.md` §1.2).
+- **K0.4 fit report** (`docs/phase8-k0-fit-report.md`): **200 006 LUT +
+  1 016 RAM32M16 = 208 134 LUT-eq, 178 % of the K26's 117 k and 2.1× the
+  99.5 k fit budget (15 % headroom)**; 59 878 FF (26 %), 624 DSP (50 %),
+  block RAM 2× the bit-minimum as Yosys maps it (122 RAMB36 minimum; port
+  merging or URAM for ACC/STATE makes it fit). Where it is: `mma_unit` 59 k
+  (28 %: 26 k of own logic — lane collectors, shifters, writeback — 10 k of
+  f32 adders, 5 k converters, 4.4 k + 7 k LUT-RAM of operand buffers; the
+  256 cells are 1.8 k), `vec_unit` 54 k (26 %), scratchpad port muxing 41 k
+  (20 %), `dma_load` 18 k, the five instruction queues 16 k, `dma_store`
+  7 k. **The fallback as stated in the amendment (8×8 array) does not fit
+  either**: the array's cells are 1 % of the core; what scales with the
+  array is the collectors and operand buffers (−35 k), while VEC lanes,
+  scratchpad ports, DMA converters and queues are sized by `BANKS = 16`.
+  Report §4 lists the levers: L1–L4 (queues in LUT-RAM, scratchpad clients
+  per the ISA access table, 8 writeback adders / 4 converter lanes, operand
+  buffers in RAMB18: −43 k, no speed cost) bring the 16-lane core to
+  ~165 k; with the 8×8 array ~130 k; the configuration that fits with
+  headroom is 8 lanes throughout (`BANKS = 8`: ≈ 105–110 k before Vivado's
+  typical 20–35 % gain over Yosys). Recommendation: the x86 Vivado run
+  first, L1–L4 in any case, then decide the lane width.
+
+## The numbers in one table (RTL cycles, harness memory latency 24)
+
+| | phase 7 | after K0 | calibrated model | note |
+|---|---|---|---|---|
+| GEMM 50×100·100×96 | 11 291 | 11 144 | 11 141 | MMA 2 718 → 2 571 (P = 100, not 112) |
+| FA, 4 KV tiles of 64 | 38 543 | 39 371 | 39 370 | MMA.T / PV +68 each (operand fills), reductions +4, VEXP2.SUM +1 per row |
+| MMA 64×128×128 / accumulate | 4 152 / 4 184 | 4 284 / 4 316 | 4 284 / 4 316 | first fill K + 3, then 32 × 128 + drain 57 / 89 |
+| VROWMAX 64×128 / 64×64 | 519 / 263 | 523 / 267 | 522 / 266 | shared reducer |
+| VEXP2.SUM 64×64 | 1 927 | 1 994 | 1 994 | partial add on the lane ALUs |
+| core LUT-eq (Yosys) | 1 297 865 | 208 134 | | KV260 117 120; fit budget 99 552 |
+
+## Findings for the main session
+
+1. **The fit target needs a lane-width decision, not only the array
+   decision.** With `BANKS = MAC_COLS = VEC_LANES = 16` fixed in
+   `tcta_pkg.sv`, three quarters of the remaining LUTs are lane-proportional
+   logic outside the array. An 8×8 array is not a parameter change today
+   (writeback half-slices, B buffer lanes); an 8-lane core is the
+   configuration that fits with headroom by the Yosys estimate. The
+   16-lane core remains the planning machine; the KV260 is the flow proof.
+2. **Vivado is the decisive number.** Yosys's `synth_xilinx` here runs
+   with `-nowidelut`, no cross-module optimization and no LUT combining;
+   its mux-heavy results (collectors, scratchpad ports, operand muxes) are
+   the kind Vivado maps 20–35 % smaller. Until the x86 run exists every
+   fit statement above is an upper bound.
+3. **Erratum E5 as written.** The accumulation format is
+   implementation-defined within §9; the simulator exposes `acc_mode` f32
+   (E1, ASIC) and fixed48 (v1 FPGA). The RTL's conformance reference is
+   the fixed48 simulator (bit-exact); kernels are still judged against the
+   PyTorch fixtures with the §9 tolerance (FA passes with the same row-max
+   error as the f32 simulator). Note for the ISA copy in this repo: §16
+   holds E1 and E5 only; E2–E4 were never delivered here, the number
+   follows the amendment.
+4. **The fixed48 window is a block-level bound, not a running window.**
+   Design notes for the ASIC option or a later revision: a running window
+   per cell needs a barrel shifter and a renormalisation lag per cell and
+   loses up to 28 ulp mean on mixed-magnitude data; truncating products
+   instead of operands fixes the accuracy but is not expressible in a
+   DSP48E2; one B level gives 2^-17 relative error (mean 28 ulp); two
+   levels at 2 DSPs per cell give ≤ 2^-23 of the bound; combining the two
+   levels inside the DSP needs a 17-bit relation the ports do not allow. A
+   known case: a row that cancels exactly in the window (`[1e8, −1e8, 1, 1,
+   3e-5] · 1`) returns 0 where binary32's sequential sum returns 2.00003;
+   both are within the bound, neither is the exact 2.00003.
+5. **MMA timing changed shape.** Block-buffered operands add a first-block
+   fill (`max(16·⌈K/16⌉, K) + 3` cycles) but remove `ceil16(K)` from the
+   block period; `MMA.T` with K not a multiple of 16 is fill-bound at
+   `16·⌈K/16⌉` per block; K > 128 faults (BAD_SHAPE: the window's headroom
+   assumes ≤ 128 products). The planning rule `mma_occupancy` is unchanged.
+6. **A pre-existing gather bug and a reducer regression were both found
+   by coverage that phase 7 lacked** (no IDX program; no calibration rerun
+   per commit). The `gather` program and `calibrate.py` are now part of
+   every K0 commit's check list.
+7. **Toolchain.** Yosys infers DSP48E2 for the multiply but leaves the
+   accumulate and its clear in LUTs (48 LUT3 + 12 CARRY per cell), so the
+   cell instantiates the primitive explicitly under `TCTA_DSP48E2` with a
+   blackbox stub generated from Yosys's `cells_xtra.v`; the behavioural
+   model is used by Verilator. yosys-slang's distributed-RAM mapping is a
+   32 × 14-bit SDP model, so 16-bit lanes take two `RAM32M16` each and a
+   16-port read replicates the RAM 16× (the A buffer's 304 cells); LUT-RAM
+   is reported in its own column and must be counted as 8 LUTs per cell.
+8. **Not delivered to this repo**: the K1–K8 task text ("as written" in
+   the amendment refers to a phase-8 task document this session never
+   received; only the amendment arrived). Fmax still waits for Vivado.

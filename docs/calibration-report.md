@@ -203,7 +203,7 @@ array), COMM link values (not built).
 ## 3. How to reproduce
 
 ```
-make -C rtl/test all                      # the nine programs (neg_untokened with TOKEN_CHECK=1), writes rtl_trace.txt
+make -C rtl/test all                      # the ten programs (neg_untokened with TOKEN_CHECK=1), writes rtl_trace.txt
 python rtl/test/calibrate.py              # per-instruction tables and the totals above
 python -m pytest tests/test_cycle.py -q   # planning rules on KV260_PLAN / CONFIG_C, the measured durations on KV260
 ```
