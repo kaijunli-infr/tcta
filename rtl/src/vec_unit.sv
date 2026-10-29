@@ -5,6 +5,14 @@
 // L / SFU_LANES cycles (one slice in flight). Row reductions keep L partials (lane l over columns l, l+L, ...)
 // and add them as a binary tree (erratum E1). VTOPK is k selection passes over the row (stable: lowest index on
 // ties), VCOUNT a counting pass that writes a front-end register.
+//
+// Phase 8 K0.2 (fit): one ALU per lane -- one f32 adder, one f32 multiplier and one BF16 rounder, operands
+// muxed by the instruction kind; max is the adder's subtract path (sign of x - v) with f32_max's NaN / ±0 rules.
+// The lanes are free during the SFU's step cycles, so the sigmoid chain's multiply (x * -log2 e) and add
+// (1 + exp2) and the VGATE decay multiply run on lanes 0 .. SFU_LANES-1. The row-reduction tree is a four-cycle
+// reducer on RED_W = L/2 adders (level n pairs adjacent partials, the E1 order); its row write is held until
+// the write FIFO takes it, and a row's last slice is not issued while the reducer is busy (never stalls for
+// n_cg >= 5). v0 had 95 adders, 36 multipliers and 47 comparators in this unit (122 k LUTs).
 module vec_unit
   import tcta_isa_pkg::*;
   import tcta_pkg::*;
@@ -38,8 +46,15 @@ module vec_unit
 );
   localparam int L = VEC_LANES;
   localparam int SFU_STEPS = L / SFU_LANES;
+  localparam int RED_W = L / 2;
+  if (2 * SFU_LANES > L) begin : g_check
+    $error("vec_unit: the SFU chain needs 2 * SFU_LANES <= VEC_LANES lanes");
+  end
+  localparam int RED_LEVELS = $clog2(L);
   localparam logic [31:0] NEG_INF = 32'hff800000;
   localparam logic [31:0] POS_ZERO = 32'h00000000;
+  localparam logic [31:0] NEG_LOG2E = 32'hbfb8aa3b;   // -1.4426950408889634 as binary32
+  localparam logic [31:0] ONE = 32'h3f800000;
   localparam int WQ = 4;
 
   // ================================================================ declarations
@@ -55,7 +70,7 @@ module vec_unit
   state_t st;
   instr_t cur;
   kind_t  kind;
-  logic   is_sfu, use_vec, use_imm, has_val, has_base, inplace, row_vec, write_slice;
+  logic   is_sfu, is_red, use_vec, use_imm, has_val, has_base, inplace, row_vec, write_slice;
   logic [15:0] t_src, t_dst, t_vec, t_aux, t_val;
   int     M, N, n_cg, r0, kk, n_pass, width_b, n_ops, n_slots;
   logic signed [15:0] q_off, k_off;
@@ -68,7 +83,8 @@ module vec_unit
   logic [15:0] rd_tile; int rd_row, rd_cg;
 
   // write FIFO
-  wreq_t wq [WQ]; int wq_wr, wq_rd, wq_cnt; logic wq_push, wq_pop; wreq_t wq_in;
+  (* ram_style = "distributed" *) wreq_t wq [WQ];
+  int wq_wr, wq_rd, wq_cnt; logic wq_push, wq_pop; wreq_t wq_in;
   logic  wo_push; wreq_t wo_in; logic [L-1:0] mask_ben;
 
   // response stage
@@ -77,9 +93,12 @@ module vec_unit
   slice_t op0, op1, partial, partial_base, red_in, sfu_slice, acc_slice, exp_part_in, result, exp2_arg, x, v_bcast, g;
   logic [31:0] rowvec;
   logic [L-1:0] result_ben; logic result_push;
-  int     sfu_step; logic sfu_busy; tag_t sfu_tag; logic exp_sum_pending;
+  int     sfu_step; logic sfu_busy, sfu_mode; tag_t sfu_tag; logic exp_sum_pending;
   logic   red_fire; logic [9:0] red_row;
   wreq_t  rsp_w, row_w, sfu_w, topk_w; logic rsp_w_push, row_w_push, sfu_w_push, topk_push;
+  // row reducer
+  logic   red_busy, red_done; int red_lvl; logic [31:0] red_reg [L]; logic [9:0] red_row_q; logic [31:0] red_result;
+  logic [31:0] red_a [RED_W], red_b [RED_W], red_sum [RED_W], red_max [RED_W];
   // VTOPK / VCOUNT
   logic [T_VR-1:0] selected;
   logic [31:0] best_v, best_as_f32; int best_i; logic best_valid;
@@ -87,12 +106,17 @@ module vec_unit
   int     count_acc;
   logic signed [31:0] best_plus_base;
 
-  // lane arithmetic
-  logic [31:0] l_add [L], l_sub [L], l_mul [L], l_max [L], l_gmul [L], l_gadd [L], l_part_add [L], l_part_max [L], l_exp_part [L];
+  // lane ALUs: one adder (sub selectable), one multiplier, one BF16 rounder per lane
+  slice_t add_a, add_b, mul_a, mul_b;
+  logic   add_sub;
+  logic [31:0] l_sum [L], l_prod [L], l_prod_all [L], l_max [L];
+  // the decay group (lanes SFU_LANES .. 2*SFU_LANES-1) has its own operand / product names: its product depends on
+  // the SFU's exp2 output, which depends on lanes 0 .. SFU_LANES-1's product, so sharing one array would read as a
+  // combinational loop
+  logic [31:0] dec_a [SFU_LANES], dec_b [SFU_LANES], l_prod_dec [SFU_LANES];
   logic [15:0] l_bf [L];
-  logic [31:0] l_sfu [SFU_LANES], sfu_in [SFU_LANES], sfu_out [SFU_LANES], decay_out [SFU_LANES], sfu_acc_in [SFU_LANES];
+  logic [31:0] sfu_in [SFU_LANES], sfu_out [SFU_LANES], sfu_y [SFU_LANES], sfu_u [SFU_LANES], sfu_acc_in [SFU_LANES];
   logic [1:0]  sfu_op;
-  logic [31:0] tree_add [2*L-1], tree_max [2*L-1];
 
   // ================================================================ helpers
   // sign-magnitude -> signed order; NaN below everything (argsort puts NaN last); +0 == -0
@@ -103,30 +127,36 @@ module vec_unit
   endfunction
   function automatic logic f_nonzero(input logic [31:0] f); return f[30:0] != 0; endfunction
   function automatic logic f_isnan(input logic [31:0] f); return f[30:23] == 8'hff && f[22:0] != 0; endfunction
+  // f32_max (np.maximum) from the adder's x - v: NaN propagates; x > v <=> x - v > 0 (exact for finite floats,
+  // the difference never rounds to zero); equal: -0 vs +0 gives +0, otherwise x
+  function automatic logic [31:0] max_from_diff(input logic [31:0] xv, input logic [31:0] vv, input logic [31:0] diff);
+    logic eq;
+    eq = (xv[30:0] == vv[30:0]) && ((xv[31] == vv[31]) || (xv[30:0] == 0));
+    if (f_isnan(xv) || f_isnan(vv)) return 32'h7fc00000;
+    if (eq) return (xv[31] & vv[31]) ? xv : {1'b0, xv[30:0]};
+    return diff[31] ? vv : xv;
+  endfunction
 
   // ================================================================ lane arithmetic instances
   for (genvar b = 0; b < L; b++) begin : g_lane
-    f32_add u_add (.a(x[b]), .b(v_bcast[b]), .sub(1'b0), .y(l_add[b]));
-    f32_add u_sub (.a(x[b]), .b(v_bcast[b]), .sub(1'b1), .y(l_sub[b]));
-    f32_mul u_mul (.a(x[b]), .b(v_bcast[b]), .y(l_mul[b]));
-    f32_max u_max (.x(x[b]), .v(v_bcast[b]), .y(l_max[b]));
-    f32_mul u_gmul (.a(x[b]), .b(g[b]), .y(l_gmul[b]));
-    f32_add u_gadd (.a(x[b]), .b(g[b]), .sub(1'b0), .y(l_gadd[b]));
+    f32_add u_add (.a(add_a[b]), .b(add_b[b]), .sub(add_sub), .y(l_sum[b]));
+    if (b >= SFU_LANES && b < 2 * SFU_LANES) begin : g_dec
+      f32_mul u_mul (.a(dec_a[b - SFU_LANES]), .b(dec_b[b - SFU_LANES]), .y(l_prod_dec[b - SFU_LANES]));
+      assign l_prod_all[b] = l_prod_dec[b - SFU_LANES];
+      assign l_prod[b] = '0;
+    end else begin : g_mul
+      f32_mul u_mul (.a(mul_a[b]), .b(mul_b[b]), .y(l_prod[b]));
+      assign l_prod_all[b] = l_prod[b];
+    end
     f32_to_bf16 u_bf (.x(x[b]), .y(l_bf[b]));
-    f32_add u_pa (.a(partial_base[b]), .b(red_in[b]), .sub(1'b0), .y(l_part_add[b]));
-    f32_max u_pm (.x(partial_base[b]), .v(red_in[b]), .y(l_part_max[b]));
-    f32_add u_ep (.a(partial_base[b]), .b(exp_part_in[b]), .sub(1'b0), .y(l_exp_part[b]));
+    always_comb l_max[b] = max_from_diff(add_a[b], add_b[b], l_sum[b]);
   end
   for (genvar b = 0; b < SFU_LANES; b++) begin : g_sfu
-    sfu_lane u_sfu (.op(sfu_op), .x(sfu_in[b]), .y(l_sfu[b]));
-    f32_mul  u_dm  (.a(sfu_acc_in[b]), .b(l_sfu[b]), .y(decay_out[b]));
+    sfu_lane u_sfu (.op(sfu_op), .x(sfu_in[b]), .t(l_prod[b]), .w(l_sum[b]), .u(sfu_u[b]), .y(sfu_y[b]));
   end
-  for (genvar n = 0; n < L; n++) begin : g_leaf
-    assign tree_add[L-1+n] = partial[n]; assign tree_max[L-1+n] = partial[n];
-  end
-  for (genvar n = 0; n < L-1; n++) begin : g_tree
-    f32_add u_ta (.a(tree_add[2*n+1]), .b(tree_add[2*n+2]), .sub(1'b0), .y(tree_add[n]));
-    f32_max u_tm (.x(tree_max[2*n+1]), .v(tree_max[2*n+2]), .y(tree_max[n]));
+  for (genvar n = 0; n < RED_W; n++) begin : g_red
+    f32_add u_ra (.a(red_a[n]), .b(red_b[n]), .sub(kind == K_ROWMAX), .y(red_sum[n]));
+    always_comb red_max[n] = max_from_diff(red_a[n], red_b[n], red_sum[n]);
   end
   always_comb best_plus_base = best_i + (has_base ? $signed(regs[cur.d[3:0]]) : 32'sd0);
   i32_to_f32 u_bi (.x(best_plus_base), .y(best_as_f32));
@@ -134,13 +164,18 @@ module vec_unit
 
   // ================================================================ issue side
   always_comb begin
-    // pacing: the tag queue, room in the write FIFO; SFU kinds keep one slice in flight; VTOPK waits at a
-    // pass boundary until the previous pass has been written (its column must be marked selected first)
-    if (is_sfu) can_issue = (tag_cnt == 0) && !sfu_busy && !exp_sum_pending && (wq_cnt <= WQ - 2);
-    else can_issue = (tag_cnt < 2) && (wq_cnt + int'(tag_cnt) <= WQ - 2);
+    // pacing: the tag queue, room in the write FIFO (one slot reserved for a held reduction result); SFU kinds
+    // keep one slice in flight; VTOPK waits at a pass boundary until the previous pass has been written (its
+    // column must be marked selected first); a reduction's last slice waits for the reducer
+    if (is_sfu) can_issue = (tag_cnt == 0) && !sfu_busy && !exp_sum_pending && (wq_cnt + (red_busy || red_done ? 1 : 0) <= WQ - 2);
+    else can_issue = (tag_cnt < 2) && (wq_cnt + int'(tag_cnt) + (red_busy || red_done ? 1 : 0) <= WQ - 2);
     if (kind == K_TOPK && (topk_fire || (s_cg == 0 && tag_cnt != 0))) can_issue = 1'b0;
-    if (kind == K_ROWMAX || kind == K_ROWSUM) begin
-      if (red_fire && s_cg == 0) can_issue = 1'b0;          // the row write is being pushed this cycle
+    if (is_red) begin
+      logic last_inflight;                        // a row's last slice is already in flight (its return would fire the reducer)
+      last_inflight = (tag_cnt >= 2'd1 && !tagq[0].vec && int'(tagq[0].cg) + 1 >= n_cg) ||
+                      (tag_cnt == 2'd2 && !tagq[1].vec && int'(tagq[1].cg) + 1 >= n_cg);
+      if (red_fire && s_cg == 0) can_issue = 1'b0;
+      if ((red_busy || red_done || red_fire || last_inflight) && s_cg + 1 >= n_cg && !s_vec_pending) can_issue = 1'b0;
     end
     // which tile the next read touches
     rd_tile = t_src; rd_row = s_row; rd_cg = s_cg;
@@ -170,7 +205,7 @@ module vec_unit
         default:       mask_ben[b] = 1'b1;
       endcase
     end
-    wo_push = (st == S_RUN) && !s_done && (n_ops == 0) && (wq_cnt < WQ) && !topk_push && !red_fire &&
+    wo_push = (st == S_RUN) && !s_done && (n_ops == 0) && (wq_cnt < WQ) && !topk_push &&
               (kind == K_FILL || kind == K_MASK_CAUSAL || kind == K_MASK_BAND);
     wo_in = '0;
     wo_in.sp = tref_sp(t_dst); wo_in.slot = tref_slot(t_dst); wo_in.row = 10'(s_row); wo_in.cg = 6'(s_cg);
@@ -184,16 +219,18 @@ module vec_unit
   end
   // SFU lane inputs (own block: the lane outputs feed the response block below)
   always_comb begin
+    sfu_mode = is_sfu && sfu_busy;             // SFU step cycles: no read returns, lanes 0..SFU_LANES-1 serve the SFU
     for (int b = 0; b < SFU_LANES; b++) begin
       sfu_in[b] = sfu_slice[sfu_step * SFU_LANES + b];
       sfu_acc_in[b] = acc_slice[sfu_step * SFU_LANES + b];
     end
   end
   // ================================================================ response side (combinational)
+  // operands first (these blocks read registers, the returned slice and the SFU's exp2 output, never a lane
+  // output, so the ALU -> SFU -> ALU chain of the sigmoid and decay paths is acyclic block by block)
   always_comb begin
     rtag = tagq[0];
     rsp_last = rd_rvalid && !rtag.vec && rtag.last;
-    // lane operands
     x = rd_rdata; g = op0;
     for (int b = 0; b < L; b++) v_bcast[b] = use_imm ? imm : rowvec;
     // reduction input with invalid columns neutralised; partial base restarts at the identity after a row fires
@@ -202,16 +239,46 @@ module vec_unit
       red_in[b] = (kind == K_ROWMAX) ? (valid_col ? rd_rdata[b] : NEG_INF) : (valid_col ? rd_rdata[b] : POS_ZERO);
       partial_base[b] = red_fire ? ((kind == K_ROWMAX) ? NEG_INF : POS_ZERO) : partial[b];
     end
+  end
+  // multiplier operands: x * v (imm / row vector), x * gate; SFU steps: t = x * -log2 e for the sigmoid chain
+  always_comb begin
+    for (int b = 0; b < L; b++) begin mul_a[b] = x[b]; mul_b[b] = (kind == K_GATE_MUL) ? g[b] : v_bcast[b]; end
+    if (sfu_mode) for (int b = 0; b < SFU_LANES; b++) begin mul_a[b] = sfu_in[b]; mul_b[b] = NEG_LOG2E; end
+  end
+  // decay group: acc * exp2(gate) during the SFU steps, the lane's ordinary product otherwise
+  always_comb begin
+    for (int b = 0; b < SFU_LANES; b++) begin
+      dec_a[b] = (sfu_mode && kind == K_GATE_DECAY) ? sfu_acc_in[b] : mul_a[SFU_LANES + b];
+      dec_b[b] = (sfu_mode && kind == K_GATE_DECAY) ? sfu_u[b] : mul_b[SFU_LANES + b];
+    end
+  end
+  // adder operands by kind; SFU steps: w = 1 + u for the sigmoid chain
+  always_comb begin
+    add_sub = 1'b0;
+    for (int b = 0; b < L; b++) begin add_a[b] = x[b]; add_b[b] = v_bcast[b]; end
+    case (kind)
+      K_SUB, K_MAX: add_sub = 1'b1;
+      K_GATE_ADD: for (int b = 0; b < L; b++) add_b[b] = g[b];
+      K_ROWSUM, K_ROWMAX: begin
+        add_sub = (kind == K_ROWMAX);
+        for (int b = 0; b < L; b++) begin add_a[b] = partial_base[b]; add_b[b] = red_in[b]; end
+      end
+      K_EXP2, K_EXP2_SUM: begin
+        if (exp_sum_pending) for (int b = 0; b < L; b++) begin add_a[b] = partial_base[b]; add_b[b] = exp_part_in[b]; end
+        else begin add_sub = 1'b1; for (int b = 0; b < L; b++) add_b[b] = rowvec; end      // exp2 argument x - vec[r]
+      end
+      default: ;
+    endcase
+    if (sfu_mode) for (int b = 0; b < SFU_LANES; b++) begin add_a[b] = ONE; add_b[b] = sfu_u[b]; end
+  end
+  always_comb begin
     // one-shot slice result
     result = rd_rdata; result_ben = slice_ben(N, int'(rtag.cg)); result_push = 1'b0;
     case (kind)
-      K_SUB: for (int b = 0; b < L; b++) result[b] = l_sub[b];
-      K_MUL, K_SCALE: for (int b = 0; b < L; b++) result[b] = l_mul[b];
-      K_ADD: for (int b = 0; b < L; b++) result[b] = l_add[b];
+      K_SUB, K_ADD, K_GATE_ADD: for (int b = 0; b < L; b++) result[b] = l_sum[b];
+      K_MUL, K_SCALE, K_GATE_MUL: for (int b = 0; b < L; b++) result[b] = l_prod_all[b];
       K_MAX: for (int b = 0; b < L; b++) result[b] = l_max[b];
       K_NEG: for (int b = 0; b < L; b++) result[b] = {~rd_rdata[b][31], rd_rdata[b][30:0]};
-      K_GATE_MUL: for (int b = 0; b < L; b++) result[b] = l_gmul[b];
-      K_GATE_ADD: for (int b = 0; b < L; b++) result[b] = l_gadd[b];
       K_CVT_BF16: for (int b = 0; b < L; b++) result[b] = {l_bf[b], 16'd0};
       K_MASK_TILE: for (int b = 0; b < L; b++) begin result[b] = NEG_INF; result_ben[b] = result_ben[b] & f_nonzero(rd_rdata[b]); end
       K_SEL: for (int b = 0; b < L; b++) result[b] = f_nonzero(rd_rdata[b]) ? op0[b] : op1[b];
@@ -224,14 +291,19 @@ module vec_unit
       default: ;
     endcase
     // exp2 argument: x - vec[r] when a row vector is given
-    for (int b = 0; b < L; b++) exp2_arg[b] = use_vec ? l_sub[b] : rd_rdata[b];
+    for (int b = 0; b < L; b++) exp2_arg[b] = use_vec ? l_sum[b] : rd_rdata[b];
     // SFU lanes of the current step
     sfu_op = (kind == K_RCP) ? 2'd1 : (kind == K_LOG2) ? 2'd2 : (kind == K_SIGMOID) ? 2'd3 : 2'd0;
     for (int b = 0; b < SFU_LANES; b++) begin
       logic [31:0] xin; logic le_m127;
       xin = sfu_in[b];
       le_m127 = xin[31] && (xin[30:0] >= 31'h42fe0000) && !f_isnan(xin);     // x <= -127
-      sfu_out[b] = ((kind == K_EXP2 || kind == K_EXP2_SUM) && le_m127) ? POS_ZERO : l_sfu[b];
+      sfu_out[b] = (kind == K_GATE_DECAY) ? l_prod_dec[b] : (((kind == K_EXP2 || kind == K_EXP2_SUM) && le_m127) ? POS_ZERO : sfu_y[b]);
+    end
+    // ---- row reducer operands: level 0 pairs the partials, later levels the previous level's results ----
+    for (int n = 0; n < RED_W; n++) begin
+      red_a[n] = red_fire ? partial[2*n] : red_reg[2*n];
+      red_b[n] = red_fire ? partial[2*n+1] : red_reg[2*n+1];
     end
     // ---- write FIFO inputs ----
     rsp_w = '0; rsp_w.sp = tref_sp(t_dst); rsp_w.slot = tref_slot(t_dst) + 12'(kind == K_SCALE ? int'(rtag.slot) : 0);
@@ -242,19 +314,21 @@ module vec_unit
     sfu_w.slot = (kind == K_EXP2_SUM) ? tref_slot(t_src) : tref_slot(t_dst);
     sfu_w.row = sfu_tag.row; sfu_w.cg = sfu_tag.cg; sfu_w.ben = slice_ben(N, int'(sfu_tag.cg));
     for (int b = 0; b < L; b++) sfu_w.data[b] = sfu_slice[b];
-    for (int b = 0; b < SFU_LANES; b++) sfu_w.data[sfu_step * SFU_LANES + b] = (kind == K_GATE_DECAY) ? decay_out[b] : sfu_out[b];
+    for (int b = 0; b < SFU_LANES; b++) sfu_w.data[sfu_step * SFU_LANES + b] = sfu_out[b];
     sfu_w_push = sfu_busy && (sfu_step == SFU_STEPS - 1) && write_slice;
-    row_w = '0; row_w.sp = tref_sp(t_dst); row_w.slot = tref_slot(t_dst); row_w.row = red_row; row_w.cg = 0; row_w.ben = L'(1);
-    row_w.data[0] = (kind == K_ROWMAX) ? tree_max[0] : tree_add[0];
-    row_w_push = red_fire;
+    row_w = '0; row_w.sp = tref_sp(t_dst); row_w.slot = tref_slot(t_dst); row_w.row = red_row_q; row_w.cg = 0; row_w.ben = L'(1);
+    for (int b = 0; b < L; b++) row_w.data[b] = red_result;
+    row_w_push = red_done && !sfu_w_push && (wq_cnt < WQ);        // held until the FIFO takes it
     topk_w = '0;
     topk_w.sp = topk_val_phase ? tref_sp(t_val) : tref_sp(t_dst); topk_w.slot = topk_val_phase ? tref_slot(t_val) : tref_slot(t_dst);
     topk_w.row = 0; topk_w.cg = 6'(topk_pass / L); topk_w.ben = L'(1) << (topk_pass % L);
     for (int b = 0; b < L; b++) topk_w.data[b] = topk_val_phase ? best_v : best_as_f32;
     // the sources are mutually exclusive by construction (one-shot results only for non-SFU, non-reduction kinds;
-    // the reduction row write is blocked one cycle by can_issue; topk pushes only between passes)
+    // the SFU write and the reducer's write of VEXP2.SUM are ordered by row_w_push; topk pushes only between
+    // passes; write-only kinds have no other source): one-hot AND-OR
     wq_push = rsp_w_push || sfu_w_push || row_w_push || topk_push || wo_push;
-    wq_in = rsp_w_push ? rsp_w : sfu_w_push ? sfu_w : row_w_push ? row_w : topk_push ? topk_w : wo_in;
+    wq_in = ({$bits(wreq_t){rsp_w_push}} & rsp_w) | ({$bits(wreq_t){sfu_w_push}} & sfu_w) | ({$bits(wreq_t){row_w_push}} & row_w) |
+            ({$bits(wreq_t){topk_push}} & topk_w) | ({$bits(wreq_t){wo_push}} & wo_in);
     // write client
     wr_req = '0;
     if (wq_cnt > 0) wr_req = slice_req(wq[wq_rd].sp, wq[wq_rd].slot, int'(wq[wq_rd].row), int'(wq[wq_rd].cg), 1'b1, wq[wq_rd].ben, wq[wq_rd].data);
@@ -327,7 +401,7 @@ module vec_unit
   // ================================================================ sequential
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      st <= S_IDLE; cur <= '0; kind <= K_SUB; is_sfu <= 0; use_vec <= 0; use_imm <= 0; has_val <= 0; has_base <= 0;
+      st <= S_IDLE; cur <= '0; kind <= K_SUB; is_sfu <= 0; is_red <= 0; use_vec <= 0; use_imm <= 0; has_val <= 0; has_base <= 0;
       inplace <= 0; row_vec <= 0; write_slice <= 0; t_src <= '0; t_dst <= '0; t_vec <= '0; t_aux <= '0; t_val <= '0;
       M <= 0; N <= 0; n_cg <= 0; r0 <= 0; kk <= 0; n_pass <= 0; width_b <= 0; n_ops <= 0; n_slots <= 1; q_off <= 0; k_off <= 0; imm <= 0;
       s_slot <= 0; s_row <= 0; s_cg <= 0; s_op <= 0; s_pass <= 0; Mk <= 0; Nk <= 0; n_cgk <= 0; total_rd <= 0; got_rd <= 0;
@@ -335,6 +409,8 @@ module vec_unit
       wq_wr <= 0; wq_rd <= 0; wq_cnt <= 0;
       op0 <= '0; op1 <= '0; partial <= '0; sfu_slice <= '0; acc_slice <= '0; exp_part_in <= '0; rowvec <= '0;
       sfu_step <= 0; sfu_busy <= 0; sfu_tag <= '0; exp_sum_pending <= 0; red_fire <= 0; red_row <= 0; topk_push <= 0;
+      red_busy <= 0; red_done <= 0; red_lvl <= 0; red_row_q <= 0; red_result <= '0;
+      for (int n = 0; n < L; n++) red_reg[n] <= '0;
       selected <= '0; best_v <= NEG_INF; best_i <= 0; best_valid <= 0; topk_pass <= 0; topk_val_phase <= 0; topk_fire <= 0;
       count_acc <= 0; fault <= 0; fault_code <= F_NONE;
     end else begin
@@ -347,6 +423,18 @@ module vec_unit
       if (tag_rd) begin tagq[0] <= tagq[1]; if (tag_wr) tagq[tag_cnt - 2'd1] <= tag_in; end
       else if (tag_wr) tagq[tag_cnt] <= tag_in;
       red_fire <= 0; topk_push <= 0; exp_sum_pending <= 0;
+      // ---- row reducer: level 0 in the red_fire cycle, then RED_LEVELS - 1 more levels; the result is held ----
+      if (red_fire) begin
+        for (int n = 0; n < RED_W; n++) red_reg[n] <= (kind == K_ROWMAX) ? red_max[n] : red_sum[n];
+        red_busy <= 1; red_lvl <= 1; red_row_q <= red_row;
+      end else if (red_busy) begin
+        for (int n = 0; n < RED_W; n++) red_reg[n] <= (kind == K_ROWMAX) ? red_max[n] : red_sum[n];
+        if (red_lvl + 1 >= RED_LEVELS) begin
+          red_busy <= 0; red_done <= 1; red_result <= (kind == K_ROWMAX) ? red_max[0] : red_sum[0];
+        end
+        red_lvl <= red_lvl + 1;
+      end
+      if (row_w_push) red_done <= 0;
 
       case (st)
         // ---------------------------------------------------------- decode
@@ -399,7 +487,8 @@ module vec_unit
             OP_VCOUNT: begin kd = K_COUNT; src_t = cur.b; dst_t = cur.b; ws = 0; end
             default: begin flt = 1; fcode = F_BAD_OPCODE; end
           endcase
-          kind <= kd; is_sfu <= sfu; n_ops <= nops; row_vec <= rv; write_slice <= ws; t_src <= src_t; t_dst <= dst_t;
+          kind <= kd; is_sfu <= sfu; is_red <= (kd == K_ROWMAX || kd == K_ROWSUM || kd == K_EXP2_SUM);
+          n_ops <= nops; row_vec <= rv; write_slice <= ws; t_src <= src_t; t_dst <= dst_t;
           if (cur.op == OP_VFILL) begin m = int'(cur.c); n = int'(cur.d); end
           else begin
             m = int'(meta[slot_index(tref_sp(src_t), tref_slot(src_t))].rows);
@@ -443,7 +532,7 @@ module vec_unit
               if (rtag.last) begin
                 case (kind)
                   K_ROWMAX, K_ROWSUM: begin
-                    for (int b = 0; b < L; b++) partial[b] <= (kind == K_ROWMAX) ? l_part_max[b] : l_part_add[b];
+                    for (int b = 0; b < L; b++) partial[b] <= (kind == K_ROWMAX) ? l_max[b] : l_sum[b];
                     if (int'(rtag.cg) + 1 >= n_cg) begin red_fire <= 1; red_row <= rtag.row; end
                   end
                   K_EXP2, K_EXP2_SUM, K_RCP, K_LOG2, K_SIGMOID: begin
@@ -483,8 +572,7 @@ module vec_unit
           end
           // SFU step
           if (sfu_busy) begin
-            for (int b = 0; b < SFU_LANES; b++)
-              sfu_slice[sfu_step * SFU_LANES + b] <= (kind == K_GATE_DECAY) ? decay_out[b] : sfu_out[b];
+            for (int b = 0; b < SFU_LANES; b++) sfu_slice[sfu_step * SFU_LANES + b] <= sfu_out[b];
             if (kind == K_EXP2_SUM) begin
               for (int b = 0; b < SFU_LANES; b++) begin
                 int col; col = int'(sfu_tag.cg) * L + sfu_step * SFU_LANES + b;
@@ -495,7 +583,7 @@ module vec_unit
             sfu_step <= sfu_step + 1;
           end
           if (exp_sum_pending) begin
-            for (int b = 0; b < L; b++) partial[b] <= l_exp_part[b];
+            for (int b = 0; b < L; b++) partial[b] <= l_sum[b];
             if (int'(sfu_tag.cg) + 1 >= n_cg) begin red_fire <= 1; red_row <= sfu_tag.row; end
           end
           // VTOPK: after a pass, write idx (and val), mark the column
@@ -510,8 +598,8 @@ module vec_unit
             end
           end
           // completion
-          if (s_done && got_rd >= total_rd && tag_cnt == 0 && !sfu_busy && !exp_sum_pending && !red_fire && !topk_fire &&
-              wq_cnt == 0 && !wq_push) begin
+          if (s_done && got_rd >= total_rd && tag_cnt == 0 && !sfu_busy && !exp_sum_pending && !red_fire && !red_busy && !red_done &&
+              !topk_fire && wq_cnt == 0 && !wq_push) begin
             st <= (kind == K_COUNT) ? S_REG : S_META;
             s_slot <= 0;
           end

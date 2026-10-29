@@ -76,16 +76,19 @@ module sfu_lane
 (
   input  logic [1:0]  op,          // 0 exp2, 1 rcp, 2 log2, 3 sigmoid
   input  logic [31:0] x,
+  input  logic [31:0] t,           // sigmoid: x * -log2(e), computed by the lane's multiplier (vec_unit)
+  input  logic [31:0] w,           // sigmoid: 1 + u, computed by the lane's adder (vec_unit)
+  output logic [31:0] u,           // sigmoid: exp2(t), for the lane's adder
   output logic [31:0] y
 );
-  localparam logic [31:0] NEG_LOG2E = 32'hbfb8aa3b;   // -1.4426950408889634 as binary32
-  localparam logic [31:0] ONE = 32'h3f800000;
+  // Phase 8 K0.2: one exp2 and one rcp evaluation per lane (v0 had two of each plus a private f32_mul / f32_add
+  // for the sigmoid chain, 4.8 k LUTs per lane); the fixed-point paths are 33 / 36 bits wide instead of 64.
 
   // ---------------------------------------------------------------- exp2 on an f32
   function automatic logic [31:0] f_exp2(input logic [31:0] v);
     logic s; logic [7:0] e; logic [23:0] m; logic signed [9:0] sh;
-    logic signed [63:0] fix;          // signed fixed point, 24 fraction bits
-    logic signed [39:0] ip;           // integer part
+    logic signed [32:0] fix;          // signed fixed point, 24 fraction bits (|v| < 128: 7 integer bits)
+    logic signed [8:0] ip;            // integer part
     logic [23:0] fr; logic [5:0] idx; logic [17:0] rem;
     logic [24:0] t0, t1; logic [24:0] mant; logic [42:0] interp; logic signed [11:0] ex;
     s = v[31]; e = v[30:23]; m = {(e != 0), v[22:0]};
@@ -93,12 +96,12 @@ module sfu_lane
     sh = $signed({2'b0, e}) - 10'sd127;               // v = m * 2^(sh-23)
     if (!s && sh >= 7) return 32'h7f800000;           // v >= 128
     if (s && sh >= 7) return 32'h00000000;            // v <= -128
-    if (sh >= 0) fix = 64'(m) <<< (sh + 1);           // m has 23 fraction bits; want 24
-    else if (sh >= -25) fix = 64'(m) >>> (-sh - 1);
+    if (sh >= 0) fix = 33'(m) <<< (sh + 1);           // m has 23 fraction bits; want 24
+    else if (sh >= -25) fix = 33'(m) >>> (-sh - 1);
     else fix = 0;
     if (s) fix = -fix;
-    if (s && fix <= -(64'sd127 <<< 24)) return 32'h00000000;   // x <= -127 -> 0 (simulator rule)
-    ip = fix >>> 24; fr = fix[23:0];
+    if (s && fix <= -(33'sd127 <<< 24)) return 32'h00000000;   // x <= -127 -> 0 (simulator rule)
+    ip = 9'(fix >>> 24); fr = fix[23:0];
     idx = fr[23:18]; rem = fr[17:0];
     t0 = EXP2_T[idx]; t1 = EXP2_T[idx + 1];
     interp = (43'(t1) - 43'(t0)) * 43'(rem);
@@ -137,7 +140,7 @@ module sfu_lane
   function automatic logic [31:0] f_log2(input logic [31:0] v);
     logic s; logic [7:0] e; logic [22:0] f; logic [4:0] lz; logic [22:0] fn; logic signed [11:0] Ei;
     logic [7:0] idx; logic [14:0] rem; logic [24:0] t0, t1; logic [39:0] interp; logic [24:0] L;
-    logic signed [35:0] fix; logic [35:0] mag; logic rs; int lead; logic [63:0] norm; logic signed [11:0] ex;
+    logic signed [35:0] fix; logic [35:0] mag; logic rs; int lead; logic [35:0] norm; logic signed [11:0] ex;
     s = v[31]; e = v[30:23]; f = v[22:0];
     if (e == 8'hff && f != 0) return 32'h7fc00000;
     if (e == 0 && f == 0) return 32'hff800000;
@@ -158,22 +161,19 @@ module sfu_lane
     rs = fix[35]; mag = rs ? 36'(-fix) : 36'(fix);
     lead = 0;
     for (int i = 35; i >= 0; i--) if (mag[i]) begin lead = i; break; end
-    norm = 64'(mag) << (63 - lead);                    // leading one at bit 63
+    norm = mag << (35 - lead);                         // leading one at bit 35
     ex = 12'(lead - 24) + 12'sd127;
-    return {rs, 8'(ex), norm[62:40]};
+    return {rs, 8'(ex), norm[34:12]};
   endfunction
 
-  logic [31:0] t, u, w, sig;
-  f32_mul u_m (.a(x), .b(NEG_LOG2E), .y(t));
-  always_comb u = f_exp2(t);
-  f32_add u_a (.a(ONE), .b(u), .sub(1'b0), .y(w));
+  logic [31:0] r;
+  always_comb u = f_exp2((op == 2'd3) ? t : x);     // own block: w = 1 + u comes back from the lane adder
   always_comb begin
-    sig = f_rcp(w);
+    r = f_rcp((op == 2'd3) ? w : x);
     case (op)
-      2'd0: y = f_exp2(x);
-      2'd1: y = f_rcp(x);
+      2'd0: y = u;
       2'd2: y = f_log2(x);
-      default: y = sig;
+      default: y = r;                 // rcp, and sigmoid = rcp(1 + exp2(x * -log2 e))
     endcase
   end
 endmodule
