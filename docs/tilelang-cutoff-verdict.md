@@ -1244,3 +1244,89 @@ with the per-module Yosys number before / after, then the fit report.
 8. **Not delivered to this repo**: the K1–K8 task text ("as written" in
    the amendment refers to a phase-8 task document this session never
    received; only the amendment arrived). Fmax still waits for Vivado.
+
+
+# Phase 8 L1–L4 (fit levers): verdict (2026-10-29)
+
+Per `docs/phase8-gate2-task.md` §0.2 (the full phase-8 text, which also
+closed K0): L1–L4 first, each its own commit with the per-module Yosys
+number before / after, a `calibrate.py` rerun per commit, no speed cost
+except L3's stated +1 cycle per accumulated row; the go message added the
+simulator's E6 K check to L1 and a re-run of the "8×8 does not fit" line
+after L2.
+
+## Verdict: L1–L3 DONE (−49.7 k, 208 k → 158 k LUT-eq), L4 NOT TAKEN (analysed: no net win)
+
+| step | commit | module(s) before → after (LUT) | core LUT-eq | of the K26 | of the fit budget | timing |
+|---|---|---|---|---|---|---|
+| after K0 | 9d34f96 | | 208 134 | 178 % | 209 % | |
+| L1 queues in LUT-RAM | e88d321 | `queue` ×5: 3 184 + 3 969 FF → 316 + 36 RAM32M16 + 112 FF | 195 234 | 167 % | 196 % | unchanged |
+| L2 scratchpad clients per the access table | f4afb57 | pads 40 789 → 14 506; glue 8 361 → 3 592 | 164 182 | 140 % | 165 % | unchanged |
+| L3 writeback on 8 adders | a8244a2 | `mma_unit` 51 781 → 46 031 | 158 432 | 135 % | 159 % | +1 cycle per accumulated / mask-added row: FA +1.4 % |
+| L4 operand buffers in block RAM | — | not built | | | | |
+
+- **L1** (e88d321): the 16 × 241-bit instruction buffer of each queue is a
+  distributed RAM with two asynchronous read heads and no reset; −12.9 k,
+  at the estimate. The simulator now faults MMA with K = 0, or K > 128
+  under `fixed48`, as the RTL's `FIX_K_MAX` check (erratum E6; test added).
+- **L2** (f4afb57): `tcta_pkg::SP_READERS / SP_WRITERS` encode the ISA's
+  access table (§1, §2.2, §5): 12 reading and 12 writing (pad, client)
+  pairs of the 35; a pad's arbiter covers their union, its write-data muxes
+  only the writers, its response path (and the core's response mux) only
+  the readers; the request record carries one word address instead of 16
+  identical per-bank addresses; a request outside the table is a simulation
+  error. The bank-arbiter proof runs with all seven clients enabled
+  (PASS). **−31.1 k against the −15 k estimate**: the estimate counted
+  clients, the table separates readers from writers.
+- **L3** (a8244a2): the mask op and the old-accumulator add each take a
+  row in two 8-lane halves (new `W_ADD` state): 16 → 8 `f32_add`, −5.75 k.
+  Cost as stated: +1 cycle per accumulated or mask-added row (MMA
+  accumulate 4 316 → 4 332, FA PV 1 299 → 1 436, FA 39 371 → 39 919). The
+  4-lane converter (−2.5 k) was built and measured: at P = 64 the converter
+  saturates (16 rows × 4 cycles) and FA's QKᵀ went 1 148 → 1 327 (+15.6 %),
+  outside the stated trade (P < 64); the converter keeps 8 lanes and the
+  2.5 k is listed as an option. The cycle model (`mma_cv_row_cycles`,
+  `mma_wb_acc_extra` 3, `mma_wb_mask_extra` 4) is exact on every shape.
+- **L4** (`docs/phase8-k0-fit-report.md` §4b): the K0 estimate (16 RAMB18,
+  −8 k) sized the buffers by capacity. They are a corner turn (whole row
+  slices written, one element per row read, each row at its own k): a
+  block-RAM version needs lane-major memories split by buffer-half parity,
+  64 RAMB18 (32 RAMB36-eq) plus ≈ 8 k LUTs of lane permutation, for a net
+  ≈ −3 to −4 k LUT-eq — on a part whose block RAM (122 RAMB36 minimum for
+  the pads, 144 available, 299 as Yosys maps them) is the tighter resource.
+  Not taken; reopened only if ACC / STATE move to URAM (task §0.4) and
+  Vivado's block-RAM count leaves ≥ 32 spare.
+
+Checks per commit: lint, `make -C rtl/test all` 10/10 (also `FORMAL=1`
+after L3), `calibrate.py` within 0.1 % on every program, `pytest tests -q`
+95 passed, `sby` bank arbiter PASS.
+
+## Findings for the main session
+
+1. **158 k LUT-eq after L1–L3** (135 % of the K26, 1.59× the fit budget):
+   the 16-lane core with L1–L3 fits only if Vivado maps ≥ 37 % under Yosys;
+   the 8×8 array on the 16-lane core (L5, −35 k by the K0 estimate, not
+   re-measured) projects to ~123 k and needs ≥ 19 %, inside the usual
+   20–35 %; the 8-lane configuration fits by Yosys alone. The decision rule
+   of task §0.3 stands; the Vivado number decides it.
+2. **Where the 158 k is now**: `mma_unit` 46 k (own 25.4 k: collectors,
+   shifters, writeback; 5.1 k adders, 4.3 k multipliers, 5.0 k converters,
+   1.8 k cells, 4.4 k + 7.2 k LUT-RAM-eq operand buffers), `vec_unit`
+   53.6 k (now the largest module: 24 adders + 16 multipliers 24 k, operand
+   muxes 19 k), `dma_load` 18 k, pads 14.5 k, `dma_store` 7 k, glue 3.6 k,
+   queues 3 k, front end + meta + tokens 4.4 k. The next levers of the same
+   kind are in `vec_unit` (operand muxes) and `dma_load` (16 dequantizers).
+3. **The access table is now hardware.** A new instruction that reads or
+   writes a pad outside ISA §1 / §2.2 / §5 needs `SP_READERS / SP_WRITERS`
+   extended (one line) or it is a simulation error; the arbiter proof
+   covers the full seven-client case.
+4. **L3's converter lesson for K3**: the writeback pipeline is at its
+   throughput limit at P = 64 (FA's K); K3's RMW pipelining should take the
+   whole row through the pipeline (old read ‖ previous write, adder halves
+   ‖ next row) rather than shorten states, and the 4-lane converter should
+   stay out until P < 64 shapes stop mattering.
+5. **Estimates of mux-heavy logic err both ways**: L2 came in at 2× its
+   estimate (the readers / writers split), L4 at a loss (ports, not bits).
+   The per-module `--only` flow (2–4 min per module) makes measuring
+   cheaper than estimating; the fit report's remaining L5–L7 are still
+   estimates.

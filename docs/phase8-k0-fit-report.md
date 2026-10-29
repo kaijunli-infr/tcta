@@ -124,6 +124,39 @@ L1–L4 (needs a 33 % gain), the 8×8 array on the 16-lane core (13 %), and the
 The order of the phase-8 task stands: Vivado first, L3–L4 now, the lane
 decision from the Vivado figure; the array is not the problem.
 
+## 4b. L4 (operand buffers in block RAM): analysed, not taken (2026-10-29)
+
+The K0 estimate sized L4 by capacity (2 × 128 kbit = 16 RAMB18, −8 k
+LUT-eq). The port structure does not allow that mapping:
+
+- **The buffers are a corner turn.** The fill engines write one row slice
+  per cycle (16 elements of one row or, scattered, one element of each of 16
+  columns), while the array reads one element of every one of the 16 rows
+  per cycle, each row at its own k. Row-major memories (one per row, as the
+  LUT-RAM is organised) need a 256-bit write port per memory: 8 RAMB18 per
+  row, 128 per buffer. Lane-major memories (one per lane, element k of row r
+  at `{r, half, k / 16}`) take the write as one 16-bit word per memory and
+  the reads as a permutation across lanes (`k mod 16` differs per row), but
+  a block whose K is not a multiple of 16 overlaps the next one on the same
+  lanes (GEMM's K = 100), so each lane memory sees up to two reads and the
+  fill's write per cycle: three ports.
+- **Splitting by buffer-half parity** (halves {0, 2} and {1, 3} in separate
+  memories; consecutive blocks use consecutive halves, blocks two apart never
+  overlap for K ≥ 16) brings it to one read and one write per memory, the
+  RAMB18 SDP shape: 32 RAMB18 per buffer, **64 RAMB18 = 32 RAMB36-eq** for
+  the two, plus the lane permutation and its inverse on the address side
+  (≈ 4 k LUTs per buffer). Net: ≈ −3 to −4 k LUT-eq for +32 RAMB36-eq.
+- **Block RAM is the tighter resource.** The pads need 122 RAMB36 at the
+  bit minimum against the K26's 144 (299 as Yosys maps them, which Vivado's
+  port merging or the task's URAM move for ACC / STATE has to fix first);
+  32 more leaves nothing for the AXI glue and nothing if the merging falls
+  short. The 16-RAMB18 version does not exist.
+
+Decision: the operand buffers stay in LUT-RAM (A 1 940 LUT + 304 RAM32M16,
+B 2 492 + 592; 11.6 k LUT-eq, 7 % of the core). The lever is reopened only
+if ACC and STATE move to URAM (task §0.4) and the Vivado block-RAM count
+leaves ≥ 32 RAMB36 spare; then it buys ≈ 3–4 k LUT-eq, not 8 k.
+
 ## 5. Reproduce
 
 ```

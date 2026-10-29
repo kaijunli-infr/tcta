@@ -1,16 +1,18 @@
-# Handoff: TileLang cut-off task, phases 1–7 and phase 8 K0 (2026-10-29)
+# Handoff: TileLang cut-off task, phases 1–7 and phase 8 K0, L1–L4 (2026-10-29)
 
 For the session steering `docs/tilelang-lowering-cutoff-task.md`, its
 addendum, `docs/tilelang-phase2-moe-task.md`, `docs/tilelang-phase3-task.md`,
 `docs/tilelang-phase4-task.md`, `docs/phase5-cycle-model-task.md`,
 `docs/phase6-mlp-task.md`, `docs/phase7-rtl-core-task.md` and
-`docs/phase8-amendment-fit.md` (K0: fit). All deliverables of phases 1–7 and
-phase 8 K0.1–K0.4 exist; the whole repo is green (`pytest tests -q`: **94
-passed**; `make -C rtl/test all`: **10/10 PASS**, lint clean). The ISA changed only where the main session sent deltas
-(v0.1.5 = Gate 1 frozen, §12 normative) plus erratum E1 (§16, the MMA k-sum
-and row-sum orders, which the simulator now implements). **This repo is
-canonical**: the main session sends spec and doc deltas only, no `sim/`
-copies. Remote: `github.com/kaijunli-infr/tcta` (private).
+`docs/phase8-amendment-fit.md` (K0: fit) and `docs/phase8-gate2-task.md`
+(the full phase-8 text: L1–L4, K1–K8). All deliverables of phases 1–7,
+phase 8 K0.1–K0.4 and L1–L3 exist (L4 analysed and not taken); the whole
+repo is green (`pytest tests -q`: **95 passed**; `make -C rtl/test all`:
+**10/10 PASS**, also with `FORMAL=1`, lint clean). The ISA is the main
+session's full file with errata E1–E6 (§16; E1 and E5 were assigned here,
+E2–E4 and E6 by the main session). **This repo is canonical**; since
+2026-10-29 the main session sends whole files (ISA, task), not deltas.
+Remote: `github.com/kaijunli-infr/tcta` (private).
 
 **Phase 1: PASS. Phase 2: PASS. Phase 3: PASS. Phase 4: PASS-WITH-CAVEATS
 (closed by v0.1.3, Gate 1 closed). Phase 5: PASS. Phase 6: PASS. Phase 7:
@@ -27,6 +29,26 @@ take the core from 1.30 M to 208 k LUT-equivalents (Yosys), 1.78× the K26
 and 2.1× the fit budget with 15 % headroom; the 8×8 fallback alone does not
 fit either (the lane-proportional logic outside the array dominates); see
 the Phase 8 K0 verdict section and `docs/phase8-k0-fit-report.md`.
+**Phase 8 L1–L3 done, L4 not taken** — 208 k → 158 k LUT-eq (135 % of the
+K26, 1.59× the fit budget) at +1.4 % on FA; the 8×8 fallback is no longer
+ruled out (needs Vivado ≥ 19 % under Yosys); see the Phase 8 L1–L4 verdict
+section. Next: K1–K8 of `docs/phase8-gate2-task.md`; the Vivado run (x86)
+decides the lane width.
+
+## Phase 8 L1–L4 in one paragraph
+
+L1 (e88d321): each queue's instruction buffer is a two-head LUT-RAM
+(−12.9 k); the simulator faults MMA K = 0 / K > 128 (E6). L2 (f4afb57):
+`tcta_pkg::SP_READERS / SP_WRITERS` carry the ISA access table into the
+scratchpads (arbiter on the union, write muxes on the writers, response
+path on the readers, one word address per request): pads 40.8 k → 14.5 k,
+glue 8.4 k → 3.6 k (−31 k, twice the estimate). L3 (a8244a2): the MMA
+writeback adds a row on 8 adders in two halves (−5.75 k, +1 cycle per
+accumulated row; the 4-lane converter was measured at +15.6 % on FA's
+K = 64 products and left at 8 lanes). L4: the operand buffers are a corner
+turn; in block RAM they need 64 RAMB18, not 16, for ≈ −3 k — not taken
+(`docs/phase8-k0-fit-report.md` §4b). Every commit: lint, 10/10,
+`calibrate.py` within 0.1 %, pytest, sby arbiter PASS.
 
 ## Phase 8 K0 in one paragraph
 
@@ -103,23 +125,31 @@ needs an x86 machine (`rtl/synth/vivado_ooc.tcl`).
 | K0.2 | `rtl/src/vec_unit.sv`, `sfu.sv`; cycle model `vec_reduce_extra`, `sfu_sum_row_extra` | done (5055321, aba825d): 123 k → 54 k LUT |
 | K0.3 | `rtl/src/mma_unit.sv`, `mma_opbuf.sv`, `mma_cell.sv`, `fp/fix_to_f32.sv`, `tcta_pkg.sv` (FIX_*); `sim/tcta/machine.py` (`_mma_sum_fixed48`), `isa.py` (`acc_mode`); ISA §9 + E5; `cycle.py::_rtl_mma_cycles`; `rtl/synth/yosys_ooc.py` (DSP48E2 stub, `mma_opbuf_a`) | done (0d2735f): 290 k → 52 k LUT, bit-exact |
 | K0.4 | `docs/phase8-k0-fit-report.md`, `rtl/synth/yosys_xck26_estimate.md` | done: 208 k LUT-eq vs 117 k (FAIL on fit; fallback stated) |
+| L1 | `rtl/src/queue.sv`; `sim/tcta/machine.py` (E6 K check), `tests/test_sim.py`; `rtl/synth/yosys_ooc.py` (LUT-eq columns) | done (e88d321): queues 15.9 k → 3.0 k LUT-eq |
+| L2 | `rtl/src/tcta_pkg.sv` (`SP_READERS / SP_WRITERS`, one address), `scratchpad.sv`, `tcta_core.sv`; `rtl/formal/bank_arbiter.sby` | done (f4afb57): pads 40.8 k → 14.5 k, glue 8.4 k → 3.6 k |
+| L3 | `rtl/src/mma_unit.sv` (`W_ADD`, `ADD_LANES`); `sim/tcta/timing.py` (`mma_cv_row_cycles`, wb extras), `cycle.py`, `tests/test_cycle.py` | done (a8244a2): `mma_unit` 51.8 k → 46.0 k; FA +1.4 % |
+| L4 | `docs/phase8-k0-fit-report.md` §4b | not taken: 64 RAMB18 for ≈ −3 k; block RAM is the tighter resource |
 
 ## Key numbers (v1 KV260 core, RTL cycles, 24-cycle harness memory latency)
 
-- GEMM 11144 (planning model 5633, calibrated 11141); FA 39371 (27856;
-  39370); dma_copy 4560, mma 30480, vec 22317, loop 814, all within 0.1 %
-  after calibration (phase 7: GEMM 11291, FA 38543).
+- GEMM 11144 (planning model 5633, calibrated 11141); FA 39919 (27856;
+  39918); dma_copy 4560, mma 30512, vec 22317, loop 814, gather 27364, all
+  within 0.1 % after calibration (K0: FA 39371, mma 30480; phase 7: GEMM
+  11291, FA 38543).
 - LOAD.2D row: 24 + beats + slices + 2 (64×128 BF16 → 3205, 5.1 B/cycle);
   STORE.2D row: 2·slices + beats + 1 (64×128 f32 → 3140).
-- MMA 64×128×128: 4284 (accumulate 4316) = first fill 131 + 32 blocks × 128
-  + drain 57 (89); GEMM's MMA 2571 (P = 100); FA QKᵀ 1148, PV accumulate
-  1299 (writeback-bound at P = 64).
+- MMA 64×128×128: 4284 (accumulate 4332) = first fill 131 + 32 blocks × 128
+  + drain 57 (105); GEMM's MMA 2571 (P = 100); FA QKᵀ 1148, PV accumulate
+  1436 (writeback-bound at P = 64: 5 cycles per row after L3).
 - VEC: `[64, 128]` op 518; with a column-vector operand 582; `[64, 1]` op
   70 (134 with a vector operand); VEXP2 `[64, 1]` 389; VEXP2.SUM `[64, 64]`
   1994 (plan 3072); row reductions +4 (shared reducer).
 - Front end: 3 cycles per word (PUSH/POP too), extension word 2 + 1 per
   entry (+1 per `_mod`), LOOP/ENDLOOP 2, LOOP r 1 + ⌈R/step⌉ after VCOUNT.
-- Synthesis (Yosys, cells only, after K0): core 200 006 LUT + 1 016
+- Synthesis (Yosys, cells only, after L1–L3): core 148 864 LUT + 1 196
+  RAM32M16 (= 158 432 LUT-eq, 135 % of the K26) / 40 654 FF / 624 DSP;
+  `mma_unit` 46 031 + 896 RAM32M16, `vec_unit` 53 581, pads 14 506, glue
+  3 592, queues 5 × (316 + 36 RAM32M16). After K0 it was 200 006 LUT + 1 016
   RAM32M16 (= 208 134 LUT-eq) / 59 878 FF / 624 DSP; `mma_unit` 51 781 +
   896 RAM32M16 (cell 7 LUT + 2 DSP), `vec_unit` 53 581, scratchpads 40 789
   LUT + block RAM (4.4 Mbit, 122 RAMB36 minimum, Yosys uses 2×), `dma_load`
@@ -185,12 +215,12 @@ needs an x86 machine (`rtl/synth/vivado_ooc.tcl`).
 
 ## Not done / out of scope
 
-Fmax (Vivado on x86). Making the core fit the KV260 beyond K0: the levers
-L1–L7 of `docs/phase8-k0-fit-report.md` §4 (queues in LUT-RAM, scratchpad
-clients per the ISA access table, writeback adders, operand buffers in
-RAMB18; the lane-width decision — 8×8 array / 8 lanes — for the main
-session; Vivado first). The K1–K8 task text was not delivered to this repo.
-Phase 8: MoE/MLA/KDA on the RTL (mechanical through
+Fmax (Vivado on x86). Making the core fit the KV260 beyond L1–L3 (158 k
+LUT-eq): the lane-width decision of `docs/phase8-gate2-task.md` §0.3 from
+the Vivado number (16-lane core needs ≥ 37 % under Yosys, the 8×8 array
+≥ 19 %, the 8-lane configuration fits by Yosys), L5–L7 of the fit report
+§4 are estimates, L4 is analysed and not taken (§4b). Phase 8 K1–K8 of
+`docs/phase8-gate2-task.md` not started: MoE/MLA/KDA on the RTL (mechanical through
 `gen_vectors.py`; they measure the gather path, VTOPK, VGATE/VMASK/VSEL and
 the dequant formats the calibration takes from the FSMs), the RTL items the
 calibration surfaced (row prefetch / pipelined DMA, column-vector layout, SFU
