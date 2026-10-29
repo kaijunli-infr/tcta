@@ -1196,6 +1196,10 @@ with the per-module Yosys number before / after, then the fit report.
    (writeback half-slices, B buffer lanes); an 8-lane core is the
    configuration that fits with headroom by the Yosys estimate. The
    16-lane core remains the planning machine; the KV260 is the flow proof.
+   *Update after phase 8 L1–L2 (measured −44 k, 164 k LUT-eq):* the 8×8
+   array on the 16-lane core projects to ~114 k with L3–L4, inside Vivado's
+   usual gain over Yosys, so the fallback is no longer ruled out; the lane
+   decision waits for the Vivado number (`docs/phase8-k0-fit-report.md` §4a).
 2. **Vivado is the decisive number.** Yosys's `synth_xilinx` here runs
    with `-nowidelut`, no cross-module optimization and no LUT combining;
    its mux-heavy results (collectors, scratchpad ports, operand muxes) are

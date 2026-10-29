@@ -97,16 +97,41 @@ package tcta_pkg;
   localparam int CL_VEC_WR    = 4;        // write only
   localparam int CL_DMA_LOAD  = 5;        // write (destination) and read (index tile)
   localparam int CL_DMA_STORE = 6;        // read only
+  // Which clients each scratchpad serves (phase 8 L2), from the ISA's access table (§1, §2.2) and the operand
+  // rules of §5, readers and writers separately: LOAD.2D writes INP/WGT/VEC/STATE and LOAD.IDX INP/WGT/ACC/VEC with
+  // the index tile read from VEC; MMA reads a from INP/ACC (§6.3), b from WGT, the mask from VEC/ACC and the old
+  // accumulator from ACC/STATE, and writes ACC/STATE; VEC reads ACC/VEC/STATE and writes ACC/VEC/STATE plus INP/WGT
+  // (VCVT); STORE reads ACC/VEC. A pad's arbiter covers the union (21 of the 35 pairs), its write-data muxes only the
+  // writers (12 pairs) and its response path only the readers (12 pairs); a request outside the table is a
+  // simulation error in tcta_core (it would otherwise never be granted and end as TOKEN_TIMEOUT).
+  localparam logic [N_CLIENTS-1:0] SP_READERS [5] = '{
+    N_CLIENTS'(1 << CL_MMA_A),                                                              // INP
+    N_CLIENTS'(1 << CL_MMA_B),                                                              // WGT
+    N_CLIENTS'((1 << CL_MMA_A) | (1 << CL_MMA_WB) | (1 << CL_VEC_RD) | (1 << CL_DMA_STORE)), // ACC
+    N_CLIENTS'((1 << CL_MMA_WB) | (1 << CL_VEC_RD) | (1 << CL_DMA_LOAD) | (1 << CL_DMA_STORE)), // VEC
+    N_CLIENTS'((1 << CL_MMA_WB) | (1 << CL_VEC_RD))                                         // STATE
+  };
+  localparam logic [N_CLIENTS-1:0] SP_WRITERS [5] = '{
+    N_CLIENTS'((1 << CL_VEC_WR) | (1 << CL_DMA_LOAD)),                                      // INP
+    N_CLIENTS'((1 << CL_VEC_WR) | (1 << CL_DMA_LOAD)),                                      // WGT
+    N_CLIENTS'((1 << CL_MMA_WB) | (1 << CL_VEC_WR) | (1 << CL_DMA_LOAD)),                   // ACC
+    N_CLIENTS'((1 << CL_VEC_WR) | (1 << CL_DMA_LOAD)),                                      // VEC
+    N_CLIENTS'((1 << CL_MMA_WB) | (1 << CL_VEC_WR) | (1 << CL_DMA_LOAD))                    // STATE
+  };
+  localparam logic [N_CLIENTS-1:0] SP_CLIENTS [5] = '{
+    SP_READERS[0] | SP_WRITERS[0], SP_READERS[1] | SP_WRITERS[1], SP_READERS[2] | SP_WRITERS[2],
+    SP_READERS[3] | SP_WRITERS[3], SP_READERS[4] | SP_WRITERS[4]
+  };
 
   typedef logic [BANKS-1:0][31:0]    slice_t;   // one row slice: one element per bank (16-bit banks use [31:16])
-  typedef logic [BANKS-1:0][SP_AW-1:0] baddr_t; // one word address per bank
 
   typedef struct packed {
     logic              valid;
     logic              we;
     sp_t               sp;        // which scratchpad
     logic [11:0]       slot;      // the slot the access belongs to (token checker / debug only)
-    baddr_t            addr;
+    logic [SP_AW-1:0]  addr;      // the word address, the same in every bank (a request is one row slice; phase 8 L2
+                                  // dropped the per-bank addresses, which no client ever set differently)
     logic [BANKS-1:0]  ben;       // bank enables (write) / don't-care (read)
     slice_t            wdata;
   } sp_req_t;
@@ -116,7 +141,7 @@ package tcta_pkg;
                                         input logic we, input logic [BANKS-1:0] ben, input slice_t wdata);
     sp_req_t r;
     r.valid = 1'b1; r.we = we; r.sp = sp; r.slot = slot; r.ben = ben; r.wdata = wdata;
-    for (int b = 0; b < BANKS; b++) r.addr[b] = sp_addr(sp, slot, row, cg);
+    r.addr = sp_addr(sp, slot, row, cg);
     return r;
   endfunction
 

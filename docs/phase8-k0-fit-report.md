@@ -94,6 +94,35 @@ to replace L7's assumption with a number, do L1–L4 in any case (no speed
 cost, −43 k), and decide the lane width from the Vivado figure; the
 16-lane core stays the planning machine (`tcta.timing.KV260`).
 
+## 4a. Re-evaluation after L1–L2 (measured, 2026-10-29)
+
+Requested with the phase-8 go: restate the fallback once L2, the lever that
+attacks the lane-proportional logic, is measured.
+
+| step | commit | LUT-eq saved | core LUT-eq | of the K26 | of the fit budget |
+|---|---|---|---|---|---|
+| after K0 | 9d34f96 | | 208 134 | 178 % | 209 % |
+| L1 queues in LUT-RAM | e88d321 | −12 900 (est. −13 k) | 195 234 | 167 % | 196 % |
+| L2 scratchpad clients per the access table, one address per request, readers / writers split | this commit | −31 052 (est. −15 k) | 164 182 | 140 % | 165 % |
+
+L2 came in at twice its estimate because the ISA table separates readers from
+writers: only 12 of the 35 (pad, client) pairs read and 12 write, so the
+write-data muxes and the response path shrank more than the arbiter did
+(the five pads 40 789 → 14 506 LUTs, the core's response mux 8 361 → 3 592).
+
+**Fallback statement, re-run.** With L3 and L4 at their estimates (−15.5 k)
+the 16-lane core lands near **149 k LUT-eq**, 1.5× the fit budget. The
+8×8 array (L5, −35 k by the K0 estimate) on the 16-lane core would then be
+near **114 k**: still above the 99.5 k budget by Yosys, but now inside
+Vivado's usual 20–35 % gain over Yosys (it needs 13 %), where before L1–L2
+it needed more than the gain could give (130 k, 23 %) and the 16-lane core
+with L1–L4 (165 k) needed 40 %. So after L2 the 8×8 fallback is no longer
+ruled out: it is the Vivado run that decides between the 16-lane core with
+L1–L4 (needs a 33 % gain), the 8×8 array on the 16-lane core (13 %), and the
+8-lane configuration (≈ 80 k by the same arithmetic, fits by Yosys alone).
+The order of the phase-8 task stands: Vivado first, L3–L4 now, the lane
+decision from the Vivado figure; the array is not the problem.
+
 ## 5. Reproduce
 
 ```

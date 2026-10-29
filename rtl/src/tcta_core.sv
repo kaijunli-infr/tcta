@@ -94,16 +94,27 @@ module tcta_core
     scratchpad #(.WORDS(WORDS), .DW(DW), .SP_ID(4'(s))) u_sp (
       .clk(clk), .rst_n(rst_n), .req(creq), .grant(g_grant[s]), .rvalid(g_rvalid[s]), .rdata(g_rdata[s]));
   end
+  // the response mux covers only the (pad, client) pairs of the access table (tcta_pkg::SP_CLIENTS, phase 8 L2)
   always_comb begin
     for (int i = 0; i < N_CLIENTS; i++) begin
       cgrant[i] = 1'b0; crvalid[i] = 1'b0; crdata[i] = '0;
       for (int s = 0; s < 5; s++) begin
-        cgrant[i] |= g_grant[s][i];
-        crvalid[i] |= g_rvalid[s][i];
-        if (g_rvalid[s][i]) crdata[i] = g_rdata[s][i];
+        if (SP_CLIENTS[s][i]) cgrant[i] |= g_grant[s][i];
+        if (SP_READERS[s][i]) begin
+          crvalid[i] |= g_rvalid[s][i];
+          if (g_rvalid[s][i]) crdata[i] = g_rdata[s][i];
+        end
       end
     end
   end
+`ifdef VERILATOR
+  // a request outside the access table has no port and would hang until TOKEN_TIMEOUT: name it instead
+  always @(posedge clk)
+    for (int i = 0; i < N_CLIENTS; i++)
+      if (creq[i].valid && creq[i].sp <= SP_STATE && !(creq[i].we ? SP_WRITERS[creq[i].sp][i] : SP_READERS[creq[i].sp][i]))
+        $fatal(1, "scratchpad client %0d %s pad %0d outside the access table (tcta_pkg::SP_READERS / SP_WRITERS)",
+               i, creq[i].we ? "writes" : "reads", creq[i].sp);
+`endif
 
   // ================================================================ tile metadata
   tmeta_t meta [N_SLOTS];

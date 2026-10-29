@@ -1,5 +1,6 @@
 # The scratchpad's two-port bank arbiter (scratchpad.sv): never two writers in a cycle, at most one port per
 # client, the highest-priority requester always granted, two pure reads at the top both granted.
+# READERS = WRITERS = 127: the proof covers the full seven-client arbiter (the pads instantiate subsets, phase 8 L2).
 # Memory is abstracted by Yosys (the banks are left as RAM cells; the properties are on the grant logic).
 # The packages need the slang front end (yosys-slang, in the OSS CAD Suite); the native parser stops at
 # tcta_isa_pkg.sv's typed localparams.
@@ -12,7 +13,7 @@ smtbmc yices
 
 [script]
 plugin -i slang
-read_slang -D FORMAL -G WORDS=16 --top scratchpad tcta_isa_pkg.sv tcta_pkg.sv scratchpad.sv
+read_slang -D FORMAL -G WORDS=16 -G READERS=127 -G WRITERS=127 --top scratchpad tcta_isa_pkg.sv tcta_pkg.sv scratchpad.sv
 prep -top scratchpad
 memory_map
 

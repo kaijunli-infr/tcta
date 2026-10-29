@@ -3,12 +3,17 @@
 // per cycle (formal property: never two writers in one cycle, the highest-priority requester is always granted).
 // A request is one row slice: a per-bank address, a bank-enable mask and, for writes, per-bank data. Reads return
 // the cycle after the grant. DW = 16 banks (INP/WGT) hold the BF16 half of the 32-bit lane word ([31:16]).
+// READERS / WRITERS (phase 8 L2) are the clients this pad serves (tcta_pkg::SP_READERS / SP_WRITERS, from the ISA's
+// access table): the arbiter covers their union, the write-data muxes only the writers, the response path only the
+// readers. Every pad took all seven for both before (41 k LUTs for the five pads, 16 banks x 2 ports x 7 sources).
 module scratchpad
   import tcta_pkg::*;
 #(
   parameter int WORDS = 1024,
   parameter int DW = 32,
-  parameter logic [3:0] SP_ID = 4'd0
+  parameter logic [3:0] SP_ID = 4'd0,
+  parameter logic [N_CLIENTS-1:0] READERS = SP_READERS[SP_ID],
+  parameter logic [N_CLIENTS-1:0] WRITERS = SP_WRITERS[SP_ID]
 ) (
   input  logic     clk,
   input  logic     rst_n,
@@ -17,11 +22,12 @@ module scratchpad
   output logic     rvalid [N_CLIENTS],
   output slice_t   rdata  [N_CLIENTS]
 );
+  localparam logic [N_CLIENTS-1:0] CLIENTS = READERS | WRITERS;
   // ---- arbiter: client 0 has the highest priority ----
   logic [N_CLIENTS-1:0] want, gA, gB;
   logic                 wA, wB;
   always_comb begin
-    for (int i = 0; i < N_CLIENTS; i++) want[i] = req[i].valid && (req[i].sp == SP_ID);
+    for (int i = 0; i < N_CLIENTS; i++) want[i] = (req[i].we ? WRITERS[i] : READERS[i]) && req[i].valid && (req[i].sp == SP_ID);
     gA = '0; gB = '0; wA = 1'b0; wB = 1'b0;
     for (int i = 0; i < N_CLIENTS; i++) begin
       if (want[i] && gA == '0) begin gA[i] = 1'b1; wA = req[i].we; end
@@ -34,16 +40,18 @@ module scratchpad
 
   // ---- mux the granted requests onto the two ports ----
   logic              pA_we, pB_we, pA_valid, pB_valid;
-  baddr_t            pA_addr, pB_addr;
+  logic [SP_AW-1:0]  pA_addr, pB_addr;
   logic [BANKS-1:0]  pA_ben, pB_ben;
   slice_t            pA_wdata, pB_wdata;
   slice_t            pA_rdata, pB_rdata;
   always_comb begin
     pA_valid = |gA; pB_valid = |gB; pA_we = 1'b0; pB_we = 1'b0; pA_ben = '0; pB_ben = '0;
     pA_addr = '0; pB_addr = '0; pA_wdata = '0; pB_wdata = '0;
-    for (int i = 0; i < N_CLIENTS; i++) begin
-      if (gA[i]) begin pA_we = req[i].we; pA_ben = req[i].ben; pA_addr = req[i].addr; pA_wdata = req[i].wdata; end
-      if (gB[i]) begin pB_we = req[i].we; pB_ben = req[i].ben; pB_addr = req[i].addr; pB_wdata = req[i].wdata; end
+    for (int i = 0; i < N_CLIENTS; i++) if (CLIENTS[i]) begin
+      if (gA[i]) pA_addr = req[i].addr;
+      if (gB[i]) pB_addr = req[i].addr;
+      if (WRITERS[i] && gA[i]) begin pA_we = req[i].we; pA_ben = req[i].ben; pA_wdata = req[i].wdata; end
+      if (WRITERS[i] && gB[i]) begin pB_we = req[i].we; pB_ben = req[i].ben; pB_wdata = req[i].wdata; end
     end
   end
 
@@ -60,12 +68,12 @@ module scratchpad
     /* verilator lint_on MULTIDRIVEN */
     logic [DW-1:0] qA, qB;
     always @(posedge clk) begin
-      qA <= mem[pA_addr[b]];
-      if (pA_valid && pA_we && pA_ben[b]) mem[pA_addr[b]] <= pA_wdata[b][31 -: DW];
+      qA <= mem[pA_addr];
+      if (pA_valid && pA_we && pA_ben[b]) mem[pA_addr] <= pA_wdata[b][31 -: DW];
     end
     always @(posedge clk) begin
-      qB <= mem[pB_addr[b]];
-      if (pB_valid && pB_we && pB_ben[b]) mem[pB_addr[b]] <= pB_wdata[b][31 -: DW];
+      qB <= mem[pB_addr];
+      if (pB_valid && pB_we && pB_ben[b]) mem[pB_addr] <= pB_wdata[b][31 -: DW];
     end
     assign rA[b] = qA;
     assign rB[b] = qB;
@@ -86,8 +94,8 @@ module scratchpad
   end
   always_comb begin
     for (int i = 0; i < N_CLIENTS; i++) begin
-      rvalid[i] = gA_q[i] | gB_q[i];
-      rdata[i]  = gA_q[i] ? pA_rdata : pB_rdata;
+      rvalid[i] = READERS[i] && (gA_q[i] | gB_q[i]);
+      rdata[i]  = !READERS[i] ? '0 : gA_q[i] ? pA_rdata : pB_rdata;
     end
   end
 
