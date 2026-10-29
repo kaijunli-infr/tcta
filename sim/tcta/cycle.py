@@ -477,36 +477,110 @@ def _rtl_vec_cycles(T: DeviceTiming, op: str, M: int, N: int, args: dict) -> int
     return T.vec_op_overhead_cycles + M * per_row
 
 
-def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, masked: bool) -> tuple:
-    """-> (cycles issue to done, array occupancy). Blocks (row-block major) start every P = ceil16(max(K, 16))
-    cycles once the result FIFO holds at most mma_rf_rows - 16 committed rows; a block's valid result rows appear
-    P + mma_result_latency + i cycles after its start and are written back one at a time (a row's writeback
-    starts when the previous one's started mma_wb_row_cycles (+ extras) ago); padding rows of the last row block
-    cost nothing; metadata write and done: 2 cycles."""
+def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, masked: bool,
+                    transpose: bool = False, mask_mul: bool = False) -> tuple:
+    """-> (cycles issue to done, array occupancy) of the v0 mma_unit (rtl/src/mma_unit.sv, phase 8 K0.3), replayed
+    cycle by cycle:
+
+    * setup: 2 cycles from issue to the run state; the A and B operand fills start in the first run cycle.
+    * fills: the A fill reads one row block (16 rows x n_cg slices, 16 * n_cg cycles) into one of four buffer
+      halves, the B fill one block's columns (K cycles for MMA, 16 * n_cg for MMA.T); both run back to back
+      while a free half exists (a half is free once its block has streamed it: K + 20 cycles after the start).
+      A half is ready mma_fill_ready_latency (2) cycles after its last read.
+    * blocks (row-block major) start every P = max(K, 16) cycles when both halves are ready and the result FIFO
+      holds at most mma_rf_rows - 16 committed rows.
+    * a block's row i lands in the result FIFO K + mma_result_latency + i cycles after its start; the converter
+      takes a row per 2 cycles and hands it to the writeback, which costs mma_wb_row_cycles per row (+ extras for
+      accumulate / masked add / masked mul); padding rows of the last row block cost the converter only.
+    * completion: 2 cycles (metadata write, done) after the last row is written.
+    """
     R, C = T.mac_rows, T.mac_cols
-    P = max(16, -(-K // 16) * 16)
+    HALVES = 4
+    P = max(16, K)
+    n_cg = -(-K // 16)
     nbi, nbj = -(-M // R), -(-N // C)
     nb = nbi * nbj
-    wb = T.mma_wb_row_cycles + (T.mma_wb_acc_extra if accumulate else 0) + (T.mma_wb_mask_extra if masked else 0)
-    t, started, last_start, committed, wb_free = 0, 0, None, 0, 0
-    pending: list = []                                             # arrival cycles of valid rows, in order
-    pi = 0
-    while started < nb or pi < len(pending):
-        if started < nb and (last_start is None or t - last_start >= P) and committed <= T.mma_rf_rows - R:
-            i0 = (started // nbj) * R
-            valid = min(R, M - i0)
-            pending.extend(t + P + T.mma_result_latency + i for i in range(valid))
-            committed += valid
-            started += 1
-            last_start = t
-        if pi < len(pending) and pending[pi] <= t and wb_free <= t:
-            wb_free = t + wb
-            committed -= 1
-            pi += 1
-        if started >= nb and pi >= len(pending):
-            break
+    f_a = R * n_cg
+    f_b = C * n_cg if transpose else K
+    ready_lat = T.mma_fill_ready_latency
+    release = K + T.mma_release_latency
+    wb_states = T.mma_wb_row_cycles - 1 + (T.mma_wb_acc_extra if accumulate else 0) + \
+        ((T.mma_wb_mask_mul_extra if mask_mul else T.mma_wb_mask_extra) if masked else 0)
+    # buffer halves as the registers show them in the current cycle, plus the pending changes
+    a_ready = [False] * HALVES; a_busy = [False] * HALVES
+    b_ready = [False] * HALVES; b_busy = [False] * HALVES
+    a_ready_at: dict = {}; b_ready_at: dict = {}        # half -> cycle the ready flag becomes visible
+    a_free_at: dict = {}; b_free_at: dict = {}          # half -> cycle the busy flag clears
+    af_ib, af_left, bf_blk, bf_left = 0, 0, 0, 0       # fill engines: next block, cycles left of the current fill
+    blk, last_start, committed = 0, None, 0
+    arrivals: list = []                                 # (cycle visible in the FIFO, padding row) per result row
+    ai, rf_cnt = 0, 0                                   # rows arrived, rows in the FIFO
+    cv_busy_until, cv_v, cv_padding = 0, False, False   # converter: end of its 2 cycles, row waiting for the writeback
+    cv_pop_at: list = []
+    wst_idle_at, popped = 0, 0
+
+    def free(ready, busy, pend_ready, h):
+        return not ready[h] and not busy[h] and h not in pend_ready
+
+    t = 0
+    while True:
+        # ---- register updates visible this cycle ----
+        for h, c in list(a_ready_at.items()):
+            if c <= t: a_ready[h] = True; del a_ready_at[h]
+        for h, c in list(b_ready_at.items()):
+            if c <= t: b_ready[h] = True; del b_ready_at[h]
+        for h, c in list(a_free_at.items()):
+            if c <= t: a_busy[h] = False; del a_free_at[h]
+        for h, c in list(b_free_at.items()):
+            if c <= t: b_busy[h] = False; del b_free_at[h]
+        while ai < len(arrivals) and arrivals[ai][0] <= t:
+            rf_cnt += 1; ai += 1
+        while cv_pop_at and cv_pop_at[0] <= t:
+            cv_pop_at.pop(0); rf_cnt -= 1; committed -= 1
+        wst_idle = wst_idle_at <= t
+        cv_busy = cv_busy_until > t
+        # ---- completion (run state -> metadata write -> done) ----
+        if blk >= nb and popped >= nb * R and wst_idle and rf_cnt == 0 and not cv_busy and not cv_v:
+            return T.mma_setup_cycles + t + 2, nb * P
+        # ---- fill engines (they test the ready / busy registers before this cycle's block start changes them) ----
+        if af_left == 0 and af_ib < nbi and free(a_ready, a_busy, a_ready_at, af_ib % HALVES):
+            af_left = f_a
+        if af_left > 0:
+            af_left -= 1
+            if af_left == 0:
+                a_ready_at[af_ib % HALVES] = t + ready_lat; af_ib += 1
+                if af_ib < nbi and free(a_ready, a_busy, a_ready_at, af_ib % HALVES):
+                    af_left = f_a
+        if bf_left == 0 and bf_blk < nb and free(b_ready, b_busy, b_ready_at, bf_blk % HALVES):
+            bf_left = f_b
+        if bf_left > 0:
+            bf_left -= 1
+            if bf_left == 0:
+                b_ready_at[bf_blk % HALVES] = t + ready_lat; bf_blk += 1
+                if bf_blk < nb and free(b_ready, b_busy, b_ready_at, bf_blk % HALVES):
+                    bf_left = f_b
+        # ---- block scheduler ----
+        if blk < nb and (last_start is None or t - last_start >= P) and committed <= T.mma_rf_rows - R:
+            ib, jb = blk // nbj, blk % nbj
+            ha, hb = ib % HALVES, blk % HALVES
+            if a_ready[ha] and b_ready[hb]:
+                i0 = ib * R
+                arrivals.extend((t + K + T.mma_result_latency + i, i0 + i >= M) for i in range(R))
+                b_ready[hb] = False; b_busy[hb] = True; b_free_at[hb] = t + release
+                a_busy[ha] = True; a_free_at[ha] = t + release
+                if jb == nbj - 1: a_ready[ha] = False
+                committed += R; last_start = t; blk += 1
+        # ---- converter (2 cycles per row) and writeback ----
+        cv_take = wst_idle and cv_v
+        if cv_take:
+            cv_v = False; popped += 1
+            wst_idle_at = t + 1 + (0 if cv_padding else wb_states)
+        if rf_cnt > 0 and not cv_busy and (not cv_v or cv_take):
+            cv_busy_until = t + 2; cv_pop_at.append(t + 2)
+            cv_padding = arrivals[ai - rf_cnt][1]
+        if cv_busy_until == t + 1:
+            cv_v = True                                  # the converted row is offered from the next cycle on
         t += 1
-    return t + 2, nb * P
 
 
 # --------------------------------------------------------------------------
@@ -811,7 +885,8 @@ def _replay(T: DeviceTiming, machines: list) -> list:
             M, K, N = inf["M"], inf["K"], inf["N"]
             if T.rtl_rules:
                 # the block schedule of the v0 array; the queue holds the next MMA until this one is written back
-                tot, occ = _rtl_mma_cycles(T, M, K, N, bool(a.get("accumulate")), a.get("mask") is not None)
+                tot, occ = _rtl_mma_cycles(T, M, K, N, bool(a.get("accumulate")), a.get("mask") is not None,
+                                           ins.op == "MMA.T", a.get("mask_mode", "add") == "mul")
                 start, end, busy = t3, t3 + tot, occ
                 c.arrays[unit] = end
                 hold(c, items, start, end, t1)

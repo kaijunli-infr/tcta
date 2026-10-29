@@ -36,6 +36,129 @@ def _mma_sum(A: np.ndarray, B: np.ndarray) -> np.ndarray:
     return S
 
 
+# ---- fixed-point accumulation (phase 8 K0.3, erratum E5): what the KV260 core's array does, element for element ----
+FIX_BITS = 48       # the accumulator: a DSP48E2's 48-bit P register
+FIX_K_MAX = 128     # K per MMA is at most the INP / STATE tile width (T_K = T_S = 128)
+FIX_TOP = (FIX_BITS - 1) - 16 - (FIX_K_MAX - 1).bit_length()   # = 24: 16-bit products placed <= FIX_TOP bits up
+                                                                 # never overflow 47 magnitude bits for K <= FIX_K_MAX
+FIX_SB = 9                                                       # B pre-shift range per level: 8-bit mb in the 18-bit B port
+FIX_SA = FIX_TOP - FIX_SB                                        # = 15: 8-bit ma in the 27-bit A port (24 bits used)
+FIX_B_LEVELS = 2                                                 # B levels: level l takes db in [l*FIX_SB, (l+1)*FIX_SB)
+
+
+def _bf16_fields(x: np.ndarray):
+    """float32 array holding BF16 values -> (sign, effective biased exponent, 8-bit significand, nan, inf) as int64 /
+    bool arrays. A subnormal BF16 (e == 0) is m * 2^(1 - 127 - 7) with m the fraction, i.e. exponent 1 without the
+    hidden bit."""
+    b = np.ascontiguousarray(x, np.float32).view(np.uint32)
+    s = ((b >> 31) & 1).astype(np.int64)
+    e = ((b >> 23) & 0xff).astype(np.int64)
+    f = ((b >> 16) & 0x7f).astype(np.int64)
+    m = np.where(e != 0, 0x80 | f, f)
+    nan = (e == 0xff) & ((b & 0x7fffff) != 0)
+    inf = (e == 0xff) & ((b & 0x7fffff) == 0)
+    return s, np.where(e == 0, 1, e), m, nan, inf
+
+
+def _fixed48_to_f32(acc: np.ndarray, W: np.ndarray, nan: np.ndarray, pinf: np.ndarray, ninf: np.ndarray) -> np.ndarray:
+    """acc * 2^W (acc signed, |acc| < 2^62) -> binary32, round to nearest even, subnormals, overflow to inf."""
+    neg = acc < 0
+    mag = np.abs(acc).astype(np.int64)
+    nz = mag != 0
+    p = np.frexp(mag.astype(np.float64))[1].astype(np.int64) - 1        # position of the leading one ...
+    p = np.where((mag >> np.clip(p, 0, 62)) == 0, p - 1, p)             # ... exact also when float64 rounded mag up
+    lsb_e = np.maximum(W + p - 23, -149)                                # exponent of the result's LSB (f32 minimum: 2^-149)
+    sh = np.clip(lsb_e - W, -63, 60)                                    # bits to drop (>= 0) or to shift in (< 0)
+    shr = np.maximum(sh, 0)
+    q = mag >> shr
+    rem = mag & ((np.int64(1) << shr) - 1)
+    half = np.where(shr > 0, np.int64(1) << np.maximum(shr - 1, 0), np.int64(0))
+    inc = (shr > 0) & ((rem > half) | ((rem == half) & ((q & 1) == 1)))
+    q = q + inc
+    q = np.where(sh < 0, mag << np.maximum(-sh, 0), q)
+    carry = q == (1 << 24)
+    q = np.where(carry, 1 << 23, q)
+    lsb_e = lsb_e + carry
+    E = np.where(q >= (1 << 23), lsb_e + 23 + 127, 0)                 # biased exponent; q < 2^23 is a subnormal
+    frac = np.where(q >= (1 << 23), q - (1 << 23), q)
+    bits = np.where(E >= 255, 0x7f800000, (E << 23) | frac).astype(np.int64)
+    bits = np.where(nz, bits, 0)
+    bits = bits | np.where(neg & nz, 1 << 31, 0)
+    bits = np.where(pinf & ~ninf, 0x7f800000, bits)
+    bits = np.where(ninf & ~pinf, 0xff800000, bits)
+    bits = np.where(nan | (pinf & ninf), 0x7fc00000, bits)
+    return bits.astype(np.uint32).view(np.float32)
+
+
+def _fix_shift(m: np.ndarray, d: np.ndarray, smax: int) -> np.ndarray:
+    """Pre-shift of an 8-bit significand whose exponent lies d >= 0 binades below its row / column maximum: m << (smax - d)
+    while that is a left shift, else m >> (d - smax) truncated (0 from d - smax >= 8 on)."""
+    left = np.clip(smax - d, 0, smax)
+    right = np.clip(d - smax, 0, 8)
+    return (m << left) >> right
+
+
+def _mma_sum_fixed48(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """[M, K] x [K, N] of BF16 values with the KV260 array's fixed-point accumulation (erratum E5).
+
+    Element (i, j) is the sum of integer products of pre-shifted significands, kept exactly in FIX_B_LEVELS 48-bit
+    signed accumulators and rounded once to binary32 (RNE) at the end:
+      * ea_max(i) = max over k of the effective biased exponent of A[i, k] (1 for zero / subnormal, NaN and inf
+        excluded, at least 1); eb_max(j) likewise over column j of B; da = ea_max(i) - ea(i, k), db = eb_max(j) - eb(k, j);
+      * A'(i, k) = +-(ma << (FIX_SA - da)) for da <= FIX_SA, else +-(ma >> (da - FIX_SA)) truncated;
+      * B level l (l = 0 .. FIX_B_LEVELS-1) holds B'_l(k, j) = +-(mb << ((l+1) * FIX_SB - db)) for db in
+        [l * FIX_SB + 1, (l+1) * FIX_SB] (from 0 for l = 0), 0 for smaller db (an earlier level has it) and, on
+        the last level only, +-(mb >> (db - (l+1) * FIX_SB)) truncated for larger db;
+      * acc_l(i, j) = sum over k of A' * B'_l (exact: |acc_l| < 2^47 for K <= FIX_K_MAX);
+      * value = (sum over l of acc_l * 2^-(l * FIX_SB)) * 2^W, W = ea_max(i) + eb_max(j) - 2*127 - 2*7 - FIX_TOP.
+    ma, mb are the 8-bit significands (hidden bit included, the fraction alone for subnormals), the sign is the
+    operand's; NaN / inf operands contribute 0 and set sticky flags that decide the result like IEEE would.
+    Products whose A operand lies within FIX_SA binades of its row maximum and whose B operand lies within
+    FIX_B_LEVELS * FIX_SB binades of its column maximum are summed exactly; beyond that an operand loses low bits,
+    by less than 2^-(FIX_TOP - 1) (A) or 2^-(FIX_B_LEVELS * FIX_SB + 8) (B) of the largest product the row and
+    column could form. Float32 sequential accumulation rounds every partial sum to 2^-24 instead.
+
+    Hardware: the shifts are per row of A and per column of B, so an array cell is FIX_B_LEVELS signed 24 x 18
+    multiply-accumulates into 48 bits (one DSP48E2 each, no per-cell shifter) sharing A'; ea_max / eb_max come from
+    the block's operand buffers before the block streams, the levels are combined in the writeback converter."""
+    sa, ea, ma, a_nan, a_inf = _bf16_fields(A)
+    sb, eb, mb, b_nan, b_inf = _bf16_fields(B)
+    a_fin, b_fin = ~(a_nan | a_inf), ~(b_nan | b_inf)
+    ea_max = np.maximum(np.where(a_fin, ea, 0).max(axis=1), 1)                 # [M]
+    eb_max = np.maximum(np.where(b_fin, eb, 0).max(axis=0), 1)                 # [N]
+    da = ea_max[:, None] - ea
+    db = eb_max[None, :] - eb
+    A_ = _fix_shift(np.where(a_fin, ma, 0), da, FIX_SA)
+    A_ = np.where(sa == 1, -A_, A_)
+    mb_ = np.where(b_fin, mb, 0)
+    acc = np.zeros((A.shape[0], B.shape[1]), np.int64)
+    for l in range(FIX_B_LEVELS):
+        d_l = db - l * FIX_SB
+        B_l = _fix_shift(mb_, d_l, FIX_SB) if l == FIX_B_LEVELS - 1 else np.where(d_l <= FIX_SB, mb_ << np.clip(FIX_SB - d_l, 0, FIX_SB), 0)
+        B_l = np.where(d_l >= (1 if l > 0 else 0), B_l, 0)
+        B_l = np.where(sb == 1, -B_l, B_l)
+        acc_l = A_ @ B_l                                                       # exact in int64 (|acc_l| < 2^47)
+        acc = acc + (acc_l << ((FIX_B_LEVELS - 1 - l) * FIX_SB))
+    W = ea_max[:, None] + eb_max[None, :] - 268 - FIX_TOP - (FIX_B_LEVELS - 1) * FIX_SB
+    M, N = acc.shape
+    nan = np.zeros((M, N), bool); pinf = np.zeros((M, N), bool); ninf = np.zeros((M, N), bool)
+    if a_nan.any() or a_inf.any() or b_nan.any() or b_inf.any():
+        a_zero, b_zero = (ma == 0) & a_fin, (mb == 0) & b_fin
+        one = lambda x: x.astype(np.int64)
+        nan = (one(a_nan).sum(axis=1)[:, None] + one(b_nan).sum(axis=0)[None, :]
+               + one(a_inf) @ one(b_zero) + one(a_zero) @ one(b_inf)) > 0
+        for k in range(A.shape[1]):                                            # inf products: sign per pair
+            ai, bi = a_inf[:, k, None], b_inf[None, k, :]
+            if not (ai.any() or bi.any()):
+                continue
+            is_nan = a_nan[:, k, None] | b_nan[None, k, :] | (ai & b_zero[None, k, :]) | (bi & a_zero[:, k, None])
+            is_inf = (ai | bi) & ~is_nan
+            sign = sa[:, k, None] ^ sb[None, k, :]
+            pinf |= is_inf & (sign == 0)
+            ninf |= is_inf & (sign == 1)
+    return _fixed48_to_f32(acc, W, nan, pinf, ninf)
+
+
 def _row_sum(X: np.ndarray, lanes: int) -> np.ndarray:
     """Per-row sum in the RTL's order: lane l accumulates columns l, l+lanes, ... sequentially in float32
     (missing columns are 0), then a binary tree over the lanes."""
@@ -384,7 +507,7 @@ class Machine:
         Am = dt.to_bf16(ats.data[:M, :K])
         Bm = bts.data[:bK, :N] if not transpose_b else bts.data[:N, :K].T
         Bm = dt.to_bf16(Bm)
-        prod = _mma_sum(Am, Bm)
+        prod = _mma_sum_fixed48(Am, Bm) if self.cfg.acc_mode == "fixed48" else _mma_sum(Am, Bm)
         if a.get("mask") is not None:
             mts = self._note_read(a["mask"], q, ins.pc)
             if a.get("mask_mode", "add") == "mul":

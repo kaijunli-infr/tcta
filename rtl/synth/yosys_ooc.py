@@ -27,9 +27,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "rtl" / "src"
 PKGS = ["tcta_isa_pkg.sv", "tcta_pkg.sv"]
-FILES = ["fp/f32_add.sv", "fp/f32_mul.sv", "fp/f32_misc.sv", "sfu.sv", "token_fifo.sv", "token_net.sv",
-         "scratchpad.sv", "tile_meta.sv", "dequant.sv", "dma_load.sv", "dma_store.sv", "mma_pe.sv",
-         "mma_unit.sv", "vec_unit.sv", "front_end.sv", "queue.sv", "tcta_core.sv"]
+FILES = ["fp/f32_add.sv", "fp/f32_mul.sv", "fp/f32_misc.sv", "fp/fix_to_f32.sv", "sfu.sv", "token_fifo.sv",
+         "token_net.sv", "scratchpad.sv", "tile_meta.sv", "dequant.sv", "dma_load.sv", "dma_store.sv", "mma_pe.sv",
+         "mma_opbuf.sv", "mma_cell.sv", "mma_unit.sv", "vec_unit.sv", "front_end.sv", "queue.sv", "tcta_core.sv"]
+# mma_cell's mac48 instantiates the DSP48E2 primitive under this define (the behavioral twin is what Verilator runs);
+# the primitive's blackbox stub is built from Yosys' own cell library (dsp48e2_header)
+DEFINES = ["TCTA_DSP48E2"]
 # token_check.sv is the TOKEN_CHECK=1 debug twin; tcta_core instantiates it only with TOKEN_CHECK, left out.
 
 # jobs: (job name, module, parameter overrides). Children with a parameterization other than the default are
@@ -45,7 +48,11 @@ JOBS: list[tuple[str, str, dict[str, str]]] = [
     ("dma_store", "dma_store", {}),
     ("dequant_elem", "dequant_elem", {}),
     ("mma_unit", "mma_unit", {}),
-    ("mma_pe", "mma_pe", {}),
+    ("mma_cell", "mma_cell", {}),                             # 2 DSP48E2 (mac48) + flags; the ACC_F32 = 0 array
+    ("mma_opbuf", "mma_opbuf", {}),                           # the B buffer (SCATTER = 1: per-lane RAMs, XOR permutation)
+    ("mma_opbuf_a", "mma_opbuf", {"SCATTER": "1'b0"}),       # the A buffer (one wide word per entry)
+    ("fix_to_f32", "fix_to_f32", {}),
+    ("mma_pe", "mma_pe", {}),                                 # the ACC_F32 = 1 (float32) cell, not instantiated
     ("vec_unit", "vec_unit", {}),
     ("sfu_lane", "sfu_lane", {}),
     ("f32_add", "f32_add", {}),
@@ -66,7 +73,8 @@ CHILD_VARIANT = {("mma_pe", "f32_mul"): "f32_mul_bf16", ("dequant_elem", "f32_mu
 # finish within an hour). Empty since phase 8 K0.1.
 FAST_ABC: set[str] = set()
 # (parent job, child module) -> explicit list of (child job, count) replacing stat's count
-EXPLICIT_CHILDREN = {("tcta_core", "scratchpad"): [(f"scratchpad_{n}", 1) for n, _, _ in SP_SLOTS]}
+EXPLICIT_CHILDREN = {("tcta_core", "scratchpad"): [(f"scratchpad_{n}", 1) for n, _, _ in SP_SLOTS],
+                     ("mma_unit", "mma_opbuf"): [("mma_opbuf_a", 1), ("mma_opbuf", 1)]}
 
 LUTS = {"LUT1", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6"}
 FFS = {"FDRE", "FDSE", "FDCE", "FDPE", "FDRE_1", "FDSE_1", "FDCE_1", "FDPE_1"}
@@ -78,6 +86,12 @@ GROUPS = [("LUT", LUTS), ("MUXF", {"MUXF7", "MUXF8"}), ("FF", FFS), ("CARRY", {"
           ("SRL", {"SRL16E", "SRLC32E"})]
 # KV260 (K26 SOM, XCK26-SFVC784-2LV-C): the xczu5ev-class fabric
 BUDGET = {"LUT": 117120, "FF": 234240, "DSP": 1248, "BRAM36": 144}
+
+
+def yosys_share() -> Path:
+    """Yosys' share directory (the Xilinx cell library with the DSP48E2 blackbox lives there)."""
+    r = subprocess.run(["yosys-config", "--datdir"], capture_output=True, text=True)
+    return Path(r.stdout.strip())
 
 
 def pkg_params() -> dict[str, int]:
@@ -95,9 +109,21 @@ def pkg_params() -> dict[str, int]:
     return ns
 
 
+def dsp48e2_header() -> str:
+    """An ANSI blackbox header for the DSP48E2 primitive, built from Yosys' cell library (non-ANSI there)."""
+    text = (yosys_share() / "xilinx" / "cells_xtra.v").read_text()
+    body = text[text.index("module DSP48E2("):]
+    body = body[:body.index("endmodule")]
+    params = re.findall(r"parameter\s+(integer\s+|\[[^\]]*\]\s*)?(\w+)\s*=\s*([^;]+);", body)
+    ports = re.findall(r"^\s*(input|output)\s*(\[[^\]]*\])?\s*(\w+);", body, re.M)
+    plist = ",\n".join(f"  parameter {t.strip() + ' ' if t.strip() else ''}{n} = {v.strip()}" for t, n, v in params)
+    portl = ",\n".join(f"  {d} {w or ''} {n}" for d, w, n in ports)
+    return f"(* blackbox *)\nmodule DSP48E2 #(\n{plist}\n) (\n{portl}\n);"
+
+
 def module_headers() -> dict[str, tuple[str, str]]:
-    """module name -> (file, header text up to the port list's closing `);`)."""
-    out = {}
+    """module name -> (file, header text up to the port list's closing `);`); plus the DSP48E2 primitive."""
+    out = {"DSP48E2": ("<yosys cells_xtra.v>", dsp48e2_header())}
     for f in FILES:
         lines = (SRC / f).read_text().splitlines()
         i = 0
@@ -150,8 +176,9 @@ def run_job(job: str, module: str, params: dict[str, str], headers, out: Path, k
     g = " ".join(f"-G {k}={v}" for k, v in params.items())
     files = " ".join(str(SRC / p) for p in PKGS) + f" {stub_file} {SRC / f}"
     js = out / f"{job}.json"
+    defs = " ".join(f"-D{d}" for d in DEFINES)
     script = f"""plugin -i slang
-read_slang --empty-blackboxes --top {module} {g} {files}
+read_slang --empty-blackboxes --top {module} {g} {defs} {files}
 """ + "\n".join(gen) + f"""
 hierarchy -check -top {module}
 """ + (f"""synth_xilinx -family xcup -top {module} -nowidelut -noiopad -noclkbuf -run begin:map_luts
@@ -194,7 +221,7 @@ def main() -> int:
                          for i, (n, w, dw) in enumerate(SP_SLOTS)]
     print(f"{len(jobs)} jobs, scratchpad WORDS: " + ", ".join(f"{n}={pp[w]}" for n, w, _ in SP_SLOTS), flush=True)
 
-    design_modules = set(headers)
+    design_modules = set(headers) - {"DSP48E2"}
     cells: dict[str, dict[str, int]] = {}
 
     def do(j):

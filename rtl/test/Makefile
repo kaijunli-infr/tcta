@@ -15,7 +15,8 @@ OBJ       := obj_dir_tc$(TOKEN_CHECK)$(if $(filter 1,$(FORMAL)),_formal,)
 PKGS := $(SRC_DIR)/tcta_isa_pkg.sv $(SRC_DIR)/tcta_pkg.sv
 SRCS := $(PKGS) $(wildcard $(SRC_DIR)/fp/*.sv) $(SRC_DIR)/sfu.sv $(SRC_DIR)/token_fifo.sv $(SRC_DIR)/token_net.sv \
         $(SRC_DIR)/scratchpad.sv $(SRC_DIR)/tile_meta.sv $(SRC_DIR)/token_check.sv $(SRC_DIR)/dequant.sv \
-        $(SRC_DIR)/dma_load.sv $(SRC_DIR)/dma_store.sv $(SRC_DIR)/mma_pe.sv $(SRC_DIR)/mma_unit.sv $(SRC_DIR)/vec_unit.sv \
+        $(SRC_DIR)/dma_load.sv $(SRC_DIR)/dma_store.sv $(SRC_DIR)/mma_pe.sv $(SRC_DIR)/mma_opbuf.sv $(SRC_DIR)/mma_cell.sv \
+        $(SRC_DIR)/mma_unit.sv $(SRC_DIR)/vec_unit.sv \
         $(SRC_DIR)/front_end.sv $(SRC_DIR)/queue.sv $(SRC_DIR)/tcta_core.sv
 
 VFLAGS := --cc --exe --build -j 4 -O2 --top-module tb_top -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDSIGNAL \

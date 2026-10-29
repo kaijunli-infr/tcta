@@ -16,6 +16,7 @@ Each vector directory holds what `tb_top.sv` loads and what it checks against:
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import struct
@@ -228,12 +229,18 @@ def write_dram_hex(path, dram, pages):
             fh.write("\n".join(f"{b:02x}" for b in chunk) + "\n")
 
 
+# the accumulation format the RTL is built for (phase 8 K0.3, erratum E5): "fixed48" (mma_unit ACC_F32 = 0, the
+# default) or "f32" (ACC_F32 = 1); `make ... ACC=f32` sets it
+ACC_MODE = os.environ.get("TCTA_ACC_MODE", "fixed48")
+
+
 def write_vectors(name, builder):
     d = os.path.join(OUT, name); os.makedirs(d, exist_ok=True)
     m0 = Machine()
     prog, checks, cfg = builder(m0)
     dram0 = m0.dram.copy()
-    m = Machine(cfg=cfg) if cfg else Machine()
+    cfg = dataclasses.replace(cfg or DeviceConfig(), acc_mode=ACC_MODE)
+    m = Machine(cfg=cfg)
     m.dram[:] = dram0
     m.trace = []
     status, fault = None, None
@@ -259,7 +266,7 @@ def write_vectors(name, builder):
     with open(os.path.join(d, "sim_trace.txt"), "w") as fh:
         fh.write("\n".join(f"{t} {q.value} {op} {pc}" for t, q, op, pc in m.trace) + "\n")
     meta = dict(name=name, n_instrs=len(prog.instrs), n_words=len(words), n_desc=n_desc,
-                t_deadlock=(cfg or DeviceConfig()).t_deadlock, fifo_depth=(cfg or DeviceConfig()).fifo_depth,
+                t_deadlock=cfg.t_deadlock, fifo_depth=cfg.fifo_depth, acc_mode=cfg.acc_mode,
                 ok=fault is None, fault=fault, steps=status["steps"] if status else None,
                 pages=[pg * PAGE for pg in pages], checks=checks)
     with open(os.path.join(d, "expect.json"), "w") as fh:

@@ -433,3 +433,68 @@ def test_mma_and_rowsum_accumulation_orders_are_sequential():
     p.finish()
     assert m.run(p.instrs)["ok"]
     assert np.allclose(read_f32(m, ro, 64, 128), bf16(A) @ bf16(B), rtol=1e-5, atol=1e-4)
+
+
+def test_fixed48_accumulation_matches_its_scalar_definition():
+    """Phase 8 K0.3, erratum E5: the KV260 array's fixed-point window, element for element, against a scalar
+    transcription of the format (pre-shifted significands, exact integer sums per B level, one rounding)."""
+    from tcta.machine import FIX_B_LEVELS, FIX_SA, FIX_SB, FIX_TOP, _fixed48_to_f32, _mma_sum_fixed48
+    A = bf16(np.exp(rng.standard_normal((6, 40)) * 5) * rng.choice([-1.0, 1.0], (6, 40)))
+    B = bf16(np.exp(rng.standard_normal((40, 7)) * 5) * rng.choice([-1.0, 1.0], (40, 7)))
+    A[1, 3] = 0.0; A[2, :] = 0.0; B[5, 2] = -0.0; A[4, 9] = np.float32(2.0 ** -130)       # zeros, a subnormal
+    F = _mma_sum_fixed48(A, B)
+
+    def fields(x):
+        b = int(np.float32(x).view(np.uint32)); s = (b >> 31) & 1; e = (b >> 23) & 0xff; f = (b >> 16) & 0x7f
+        return s, (1 if e == 0 else e), (f if e == 0 else 0x80 | f)
+    def shift(m, d, smax):
+        return (m << (smax - d)) if d <= smax else (m >> (d - smax))
+    for i in range(6):
+        ea_max = max(1, max(fields(A[i, k])[1] for k in range(40)))
+        for j in range(7):
+            eb_max = max(1, max(fields(B[k, j])[1] for k in range(40)))
+            acc = [0] * FIX_B_LEVELS
+            for k in range(40):
+                sa, ea, ma = fields(A[i, k]); sb, eb, mb = fields(B[k, j])
+                a = shift(ma, ea_max - ea, FIX_SA) * (-1 if sa else 1)
+                db = eb_max - eb
+                for l in range(FIX_B_LEVELS):
+                    lo = l * FIX_SB
+                    inside = (db >= (lo + 1 if l else 0)) and (db <= lo + FIX_SB or l == FIX_B_LEVELS - 1)
+                    if inside:
+                        acc[l] += a * shift(mb, db - lo, FIX_SB) * (-1 if sb else 1)
+            total = sum(acc[l] << ((FIX_B_LEVELS - 1 - l) * FIX_SB) for l in range(FIX_B_LEVELS))
+            W = ea_max + eb_max - 268 - FIX_TOP - (FIX_B_LEVELS - 1) * FIX_SB
+            ref = _fixed48_to_f32(np.array([total], np.int64), np.array([W], np.int64), np.zeros(1, bool), np.zeros(1, bool), np.zeros(1, bool))[0]
+            assert F[i, j] == ref, (i, j, F[i, j], ref)
+            assert abs(acc[0]) < 2 ** 47 and abs(acc[1]) < 2 ** 47
+
+
+def test_fixed48_accumulation_accuracy_and_specials():
+    from tcta.machine import _mma_sum, _mma_sum_fixed48
+    A = bf16(rng.standard_normal((64, 128))); B = bf16(rng.standard_normal((128, 128)))
+    exact = A.astype(np.float64) @ B.astype(np.float64)
+    F = _mma_sum_fixed48(A, B); S = _mma_sum(A, B)
+    ulp = np.spacing(np.abs(exact).astype(np.float32)).astype(np.float64)
+    assert np.abs(F - exact).max() / ulp.min() >= 0                     # well-defined
+    assert (np.abs(F.astype(np.float64) - exact) <= 0.5 * ulp + 1e-30).all()       # correctly rounded on Gaussian data
+    assert np.abs(F - exact).max() <= np.abs(S - exact).max()                        # never worse than float32 sequential here
+    # softmax-like A (one row maximum, a long tail): every product loses less than 2^-23 of the largest product the
+    # row and column could form (machine._mma_sum_fixed48), plus the final rounding
+    P = np.exp(rng.standard_normal((64, 128)) * 3); P /= P.max(axis=1, keepdims=True)
+    A = bf16(P); exact = A.astype(np.float64) @ B.astype(np.float64)
+    bound = np.abs(A).max(axis=1).astype(np.float64)[:, None] * np.abs(B).max(axis=0).astype(np.float64)[None, :]
+    assert (np.abs(_mma_sum_fixed48(A, B) - exact) <= 128 * 2.0 ** -23 * bound + 2.0 ** -24 * np.abs(exact) + 1e-30).all()
+    # IEEE specials and the extremes of the binary32 range
+    A = bf16(np.array([[np.inf, 1.0], [np.inf, -np.inf], [np.nan, 1.0], [0.0, -0.0], [np.inf, 0.0], [-1.0, -0.0], [-np.inf, 2.0],
+                       [3e38, 3e38], [1e-40, 1e-40], [2.0 ** -130, 2.0 ** -130]], np.float32))
+    B = bf16(np.array([[1.0], [0.0]], np.float32))
+    F = _mma_sum_fixed48(A, B).ravel(); S = _mma_sum(A, B).ravel()
+    assert np.array_equal(np.isnan(F), np.isnan(S)) and np.array_equal(F[~np.isnan(F)], S[~np.isnan(S)])
+    assert F[3] == 0.0 and not np.signbit(F[3])
+    # the largest same-sign sum the window must hold (K = 128 maximal products) is exact
+    A = bf16(np.full((1, 128), 1.9921875, np.float32)); B = bf16(np.full((128, 1), 1.9921875, np.float32))
+    assert _mma_sum_fixed48(A, B)[0, 0] == np.float32(128 * 1.9921875 ** 2)
+    # the device configuration selects it
+    m = Machine(cfg=DeviceConfig(acc_mode="fixed48"))
+    assert m.cfg.acc_mode == "fixed48"

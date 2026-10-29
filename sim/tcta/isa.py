@@ -112,10 +112,14 @@ class DeviceConfig:
     # Row reductions (VROWSUM, VEXP2.SUM): `sum_lanes` lanes, lane l sums columns l, l+L, l+2L, ... sequentially
     # in float32 (columns >= cols_valid contribute 0), then the L partials are added as a binary tree.
     sum_lanes: int = 16
+    # MMA accumulation format (ISA §9, erratum E5; phase 8 K0.3): "f32" = float32 sequential sums as above (the ASIC
+    # configurations), "fixed48" = the KV260 array's 48-bit fixed-point window per output element, rounded once to
+    # binary32 at the end (machine._mma_sum_fixed48). Both are conformant under §9; the RTL is bit-exact to "fixed48".
+    acc_mode: str = "f32"
 
 
 # ISA §11 descriptors (v0.1.4). ACC "8 + 2 wide" is 16 slot indices (a wide accumulator is 4 consecutive slots).
-DEVICE_KV260 = DeviceConfig()
+DEVICE_KV260 = DeviceConfig(acc_mode="fixed48")
 DEVICE_CONFIG_C = DeviceConfig(slots={SP.INP: 5, SP.WGT: 32, SP.ACC: 16, SP.VEC: 64, SP.STATE: 2}, fifo_depth=8,
                                t_deadlock=10_000_000)
 

@@ -22,11 +22,16 @@ rules stay available as `KV260_PLAN` and are unchanged for `CONFIG_C`.
 | program | RTL cycles | model, planning (`KV260_PLAN`) | model, calibrated (`KV260`) |
 |---|---|---|---|
 | dma_copy (LOAD f32 64×64, STORE) | 4560 | 2248 (−50.7 %) | 4557 (−0.1 %) |
-| mma (2 LOAD, 4 MMA forms, VCVT, 2 STORE) | 29952 | 24280 (−18.9 %) | 29946 (−0.0 %) |
-| vec (the FA VEC chain on one tile) | 22177 | 14056 (−36.6 %) | 22174 (−0.0 %) |
-| **gemm** (compiler GEMM, 50×100·100×96) | **11291** | 5633 (−50.1 %) | **11286 (−0.0 %)** |
-| **fa** (compiler FA, 4 KV tiles of 64) | **38543** | 27856 (−27.7 %) | **38642 (+0.3 %)** |
-| loop (front-end micro-test) | 814 | 1096 (+34.6 %) | 814 (+0.0 %) |
+| mma (2 LOAD, 4 MMA forms, VCVT, 2 STORE) | 30480 | 24280 (−20.3 %) | 30478 (−0.0 %) |
+| vec (the FA VEC chain on one tile) | 22317 | 14056 (−37.0 %) | 22306 (−0.0 %) |
+| **gemm** (compiler GEMM, 50×100·100×96) | **11144** | 5633 (−49.5 %) | **11141 (−0.0 %)** |
+| **fa** (compiler FA, 4 KV tiles of 64) | **40127** | 27856 (−30.6 %) | **39082 (−2.6 %)** |
+| loop (front-end micro-test) | 814 | 1096 (+34.6 %) | 815 (+0.1 %) |
+
+Re-measured after phase 8 K0.3 (the fixed-point MMA unit, 2026-10-29): every
+MMA shape matches the RTL exactly (§1.2); the FA gap is the K0.2 row reducer
+stalling on N = 64 reductions (§2), not modelled yet. Phase-7 numbers: mma
+29952, vec 22177, gemm 11291, fa 38543 (model +0.3 %).
 
 GEMM and FA are within 10 % (the J5 bar), within 0.3 % in fact, but only
 after the rule changes of §1: with the planning rules the model
@@ -81,31 +86,34 @@ pipelining of rows would make it beats-bound (16 B/cycle, the plan). Gathers
 rows for the index slice and 1 per skipped row (from the FSM; no gather
 program ran on RTL in this phase).
 
-### 1.2 MMA (`mma_unit.sv`)
+### 1.2 MMA (`mma_unit.sv`, phase 8 K0.3 unit)
 
 | | planning | measured |
 |---|---|---|
-| occupancy | `⌈M/16⌉·⌈N/16⌉·K` | blocks start every `P = ceil16(max(K, 16))`: identical for K a multiple of 16; K = 100 costs 112 (+12 %) |
-| drain / `mma_latency` | 8 | result rows of a block appear `P + 22` cycles after its start (`mma_result_latency = 22`), one row written back every 2 cycles (`+2` accumulate: `W_OLD, W_OLD_WAIT`; `+3` masked), padding rows of the last row block free: drain **56** plain, **88** accumulate on a full last block, 30 on GEMM's 2-row last block |
+| occupancy | `⌈M/16⌉·⌈N/16⌉·K` | blocks start every `P = max(K, 16)` once their operand halves are filled: identical for K ≥ 16 (phase 7's unit needed `ceil16(K)`, K = 100 cost 112) |
+| operand fills | — | A: `16·⌈K/16⌉` slice reads per row block; B: `K` reads per block (`MMA.T`: `16·⌈K/16⌉`); four buffer halves each, filled back to back ahead of the array, a half ready 2 cycles after its last read and free `K + 20` cycles after the last block start that used it. The first block starts `max(16·⌈K/16⌉, K) + 3` cycles after issue; the fills otherwise hide behind `P` except `MMA.T` with K not a multiple of 16 (fill-bound at `16·⌈K/16⌉` per block) |
+| drain / `mma_latency` | 8 | row i of a block lands in the result FIFO `K + 21 + i` cycles after its start (`mma_result_latency = 21`); a converter takes 2 cycles per row and the writeback 2 cycles per row plain (`+2` accumulate: `W_OLD, W_OLD_WAIT`; `+3` masked add, `+4` masked mul); padding rows of the last row block cost the converter only: drain **57** plain on a full last block (`K + 21 + 2·16 + 4`), **89** accumulate |
 | result FIFO | — | 32 rows: a block starts only when ≤ 16 committed rows wait (`mma_rf_rows = 32`) |
 | next MMA | may start when the array is free (the drain overlaps) | the queue holds the next instruction until DONE (+1 cycle); no overlap |
 | A from ACC | — | same cost as A from INP (two read ports per bank) |
 
 | instruction | RTL | calibrated model | planning model |
 |---|---|---|---|
-| MMA 64×128×128 (32 blocks, P 128) | 4152 | 4152 | 4104 |
-| MMA accumulate 64×128×128 | 4184 | 4182 | 4104 |
-| MMA, A from ACC, plain / accumulate | 4152 / 4184 | 4152 / 4182 | 4104 |
-| MMA 50×100×96 (GEMM: 24 blocks, P 112) | 2718 | 2716 | 2408 |
-| MMA.T 64×64×64 (FA QKᵀ: 16 blocks, P 64) | 1080 | 1080 | 1032 |
-| MMA accumulate 64×64×64 (FA PV) | 1231 | 1257 (+2.1 %) | 1032 |
+| MMA 64×128×128 (32 blocks, P 128) | 4284 | 4284 | 4104 |
+| MMA accumulate 64×128×128 | 4316 | 4316 | 4104 |
+| MMA, A from ACC, plain / accumulate | 4284 / 4316 | 4284 / 4316 | 4104 |
+| MMA 50×100×96 (GEMM: 24 blocks, P 100) | 2571 | 2571 | 2408 |
+| MMA.T 64×64×64 (FA QKᵀ: 16 blocks, P 64) | 1148 | 1148 | 1032 |
+| MMA accumulate 64×64×64 (FA PV) | 1299 | 1299 | 1032 |
 
-The FA PV accumulate is writeback-bound: at P = 64 each block's 16 rows take
-64 cycles to write back and the two-block result FIFO lets a block start only
-when the block before the previous one has drained, so blocks go every ~73
-cycles instead of 64 (+14 %). The model's schedule simulation reproduces the
-mechanism and is 26 cycles pessimistic per instruction (its pop handshake is
-one cycle coarser than the RTL's).
+`_rtl_mma_cycles` replays the unit cycle by cycle (fill engines, block
+scheduler, FIFO, converter, writeback FSM) with the constants above and
+reproduces every measured shape exactly. The 64×128×128 product costs 132
+cycles more than phase 7's unit (the B fill of the first block, `K + 3`),
+GEMM 147 fewer (P = 100 instead of 112), FA's QKᵀ 68 more (`16·4` fill) and
+its PV accumulate 68 more: at P = 64 each block's 16 rows take 64 cycles to
+write back, so the FIFO rule (≤ 16 committed rows) lets a block start only
+every ~73 cycles (+14 %), as in phase 7, plus the first fill.
 
 ### 1.3 VEC / SFU (`vec_unit.sv`, `sfu.sv`)
 
@@ -166,8 +174,12 @@ array), COMM link values (not built).
 
 ## 2. What still differs (after calibration)
 
-- **FA PV accumulate**: +26 cycles per instruction (1257 vs 1231), the
-  result-FIFO handshake; 8 instructions, +0.5 % of FA.
+- **Row reductions at N = 64 (phase 8 K0.2)**: the shared four-cycle row
+  reducer blocks a row's last slice while it is busy, so `VROWMAX 64×64`
+  costs 456 cycles (model 262; 263 in phase 7) and `VEXP2.SUM 64×64` 1994
+  (model 1926; 1927 in phase 7): FA −2.6 %. A pacing fix in `vec_unit.sv`
+  (issue the last slice when the reducer frees by the time it returns) is
+  the K0.2 follow-up; until then the model keeps the phase-7 cost.
 - **Per-instruction overheads ±1 cycle**: VFILL 5 (model 6), VROWMAX/VROWSUM
   7 (model 6), VCOUNT 6 (model 7); the FINISH detection adds 3 cycles after
   the last DONE that the model does not count (every total is 3–5 cycles
@@ -184,8 +196,8 @@ array), COMM link values (not built).
   (MoE/MLA/KDA on RTL) measures them.
 - **Memory latency** is the harness's 24 cycles; a real LPDDR port changes
   the DMA numbers of §1.1 proportionally (24 of a row's 38–50 cycles).
-- **`mma_latency` (planning) is unused under `rtl_rules`**; the drain is
-  computed from `mma_result_latency` and the writeback rate.
+- **`mma_latency` (planning) is unused under `rtl_rules`**; the MMA cost is
+  the replay of §1.2.
 
 ## 3. How to reproduce
 

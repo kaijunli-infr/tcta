@@ -5,6 +5,7 @@
  "n_desc": 2,
  "t_deadlock": 1000000,
  "fifo_depth": 8,
+ "acc_mode": "fixed48",
  "ok": true,
  "fault": null,
  "steps": 2,

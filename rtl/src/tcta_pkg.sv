@@ -247,4 +247,39 @@ package tcta_pkg;
       default:  return 0;
     endcase
   endfunction
+
+  // ---- MMA fixed-point accumulation (phase 8 K0.3, erratum E5; mirrors FIX_* in sim/tcta/machine.py) ----
+  // An output element is the exact integer sum of pre-shifted BF16 significand products in FIX_B_LEVELS 48-bit
+  // DSP48E2 accumulators: A' = +-(ma << (FIX_SA - da)) (ma >> (da - FIX_SA) truncated beyond), da = the row's
+  // maximum exponent - ea; B level l = +-(mb << ((l+1) * FIX_SB - db)) for db in (l * FIX_SB, (l+1) * FIX_SB] (from 0 on
+  // level 0, truncated beyond on the last level). value = (acc_0 * 2^FIX_SB + acc_1) * 2^(ea_max + eb_max - 268 -
+  // FIX_TOP - FIX_SB), rounded once to binary32 in the writeback.
+  localparam int FIX_BITS     = 48;
+  localparam int FIX_K_MAX    = (T_K > T_S) ? T_K : T_S;                 // K per MMA <= the INP / STATE tile width
+  localparam int FIX_TOP      = (FIX_BITS - 1) - 16 - $clog2(FIX_K_MAX); // 24: no accumulator overflow for K <= FIX_K_MAX
+  localparam int FIX_SB       = 9;                                       // B pre-shift range per level (18-bit B port)
+  localparam int FIX_SA       = FIX_TOP - FIX_SB;                        // 15: A pre-shift range (27-bit A port)
+  localparam int FIX_B_LEVELS = 2;
+  localparam int FIX_AW       = 8 + FIX_SA + 1;                          // 24: signed A operand
+  localparam int FIX_BW       = 8 + FIX_SB + 1;                          // 18: signed B operand
+  localparam int FIX_ACC_W    = FIX_BITS + (FIX_B_LEVELS - 1) * FIX_SB;  // 57: the combined accumulator
+  localparam int FIX_W_W      = 10;                                      // signed window exponent (-299 .. 207)
+  localparam int FIX_W_BIAS   = 2 * 127 + 2 * 7 + FIX_TOP + (FIX_B_LEVELS - 1) * FIX_SB;   // 301
+
+  // decoded BF16: effective exponent e (1 for zero / subnormal), significand m with the hidden bit (the fraction
+  // alone for e == 0), the IEEE classes
+  typedef struct packed { logic sgn; logic nan; logic inf; logic zero; logic [7:0] e; logic [7:0] m; } bf16_f_t;
+  function automatic bf16_f_t bf16_fields(input logic [15:0] x);
+    bf16_f_t r;
+    r.sgn = x[15]; r.e = (x[14:7] == 8'd0) ? 8'd1 : x[14:7];
+    r.m = {x[14:7] != 8'd0, x[6:0]};
+    r.nan = (x[14:7] == 8'hff) && (x[6:0] != 7'd0);
+    r.inf = (x[14:7] == 8'hff) && (x[6:0] == 7'd0);
+    r.zero = (x[14:0] == 15'd0);
+    return r;
+  endfunction
+  // the operands as the array sees them: pre-shifted significands with the sign applied, plus the IEEE classes
+  typedef struct packed { logic signed [FIX_AW-1:0] v; logic nan; logic inf; logic zero; logic sgn; } fix_a_t;
+  typedef struct packed { logic [FIX_B_LEVELS-1:0][FIX_BW-1:0] v; logic nan; logic inf; logic zero; logic sgn; } fix_b_t;
+
 endpackage

@@ -5,6 +5,7 @@
  "n_desc": 0,
  "t_deadlock": 1000000,
  "fifo_depth": 8,
+ "acc_mode": "fixed48",
  "ok": false,
  "fault": {
   "code": "TOKEN_LEAK",

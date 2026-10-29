@@ -102,20 +102,37 @@ and writes it as beats with byte enables (`2·slices + beats + 1` per row).
 The next row's fetch does not overlap the current row (the main gap to the
 plan: 5 B/cycle instead of 16 on a 64×128 BF16 tile).
 
-**MMA unit** (`mma_unit.sv`, `mma_pe.sv`). Output-stationary 16×16 systolic
-array of `mma_pe` (one FP32 accumulator each: `acc = fl(acc + fl(a·b))`, the
-first product added to +0, erratum E1). A product `[M, K] × [K, N]` is
-`⌈M/16⌉ · ⌈N/16⌉` blocks, row-block major; row i of a block streams
-`a[i0+i][k]` from cycle `T + i`, column j streams `b[k][j0+j]` (`MMA.T`:
-`b[j0+j][k]`) from `T + j`. Blocks start every `P = ceil16(max(K, 16))`
-cycles while the 32-row result FIFO has room for one (a block's valid rows
-appear `P + 22 + i` cycles after its start). The writeback FSM takes one
-result row at a time: mask (add / mul with the mask tile's slice, MMA.MASKED:
-3 more cycles), `+ old` (accumulate: a read of the destination slice, 2 more
-cycles), the write (2 cycles per row plain); `wide` and `row0` are address
-arithmetic there. A from ACC reads the BF16 payload written by `VCVT`
-in place. Faults: K = 0 or a bad scratchpad BAD_SHAPE, a bad mask mode
-BAD_QUALIFIER.
+**MMA unit** (`mma_unit.sv`, `mma_opbuf.sv`, `mma_cell.sv`, `fp/fix_to_f32.sv`;
+phase 8 K0.3). Output-stationary 16×16 systolic array of `mma_cell`, each
+cell two DSP48E2 multiply-accumulators (signed 24×18, 48-bit sums, erratum
+E5's two B levels) plus sticky NaN/inf flags; the FP32 cell `mma_pe` remains
+under the `ACC_F32` parameter. Operands are block-buffered: an A fill reads
+one 16-row block (`16·⌈K/16⌉` slice reads) and a B fill one block's 16
+columns (`K` reads for `MMA`, `16·⌈K/16⌉` for `MMA.T`) into one of four
+LUT-RAM buffer halves each (`mma_opbuf`; the B buffer is 16 per-lane RAMs
+behind an XOR permutation so a column slice scatters and a row streams
+without a crossbar); the fill also records every row's / column's largest
+exponent. Fills run back to back while a half is free; a half is ready two
+cycles after its last read and is released `K + 20` cycles after the last
+block start that used it. A product `[M, K] × [K, N]` is `⌈M/16⌉ · ⌈N/16⌉`
+blocks, row-block major; blocks start every `P = max(K, 16)` cycles when
+both halves are ready and the 32-row result FIFO has room for one. Row i of
+a block streams `a[i0+i][k]` shifted into the block's window from cycle
+`T + 1 + i`, column j streams `b[k][j0+j]` from `T + 1 + j`; cell `(i, j)`
+finishes at `T + K + 5 + i + j` and a one-hot collector per lane writes
+`{flags, 57-bit sum}` into the FIFO (row i lands `K + 21 + i` cycles after
+the block start). A converter (8 `fix_to_f32` lanes, 2 cycles per row)
+rounds each row once to binary32 with the block's exponent maxima; the
+writeback FSM takes one converted row at a time: mask (`MMA.MASKED`: a mask
+slice read, then one add cycle or two multiply cycles on 8 multipliers),
+`+ old` (accumulate: a read of the destination slice, 2 more cycles), the
+write — 2 cycles per row plain, 4 accumulate, 5 masked add, 6 masked mul;
+padding rows of the last row block cost the converter only. `wide` and
+`row0` are address arithmetic there; A from ACC reads the BF16 payload
+written by `VCVT` in place. Faults: K = 0, K > 128 or a bad scratchpad
+BAD_SHAPE, a bad mask mode BAD_QUALIFIER. `docs/calibration-report.md` §1.2
+has the measured cycles; `sim/tcta/cycle.py::_rtl_mma_cycles` replays this
+schedule cycle by cycle.
 
 **VEC unit** (`vec_unit.sv`, `sfu.sv`). One in-order pipe over row slices:
 a micro-sequencer issues one scratchpad read per cycle (the row-vector
@@ -155,11 +172,29 @@ against the token FIFO history, so the negative test faults at the same
 instruction as the simulator. VALID_MISMATCH and ACC_NOT_CONVERTED are
 simulator-only.
 
-## 3. Numerics the RTL and the simulator share (ISA §9, erratum E1)
+## 3. Numerics the RTL and the simulator share (ISA §9, errata E1 and E5)
 
-- MMA: `S = fl(…fl(fl(0 + a0·b0) + a1·b1)… + a_{K−1}·b_{K−1})`, products
-  rounded to binary32 first (exact unless subnormal), then `S' = S ∘ mask`
-  (MMA.MASKED), then `fl(old + S')` if accumulate else `S'`.
+- MMA (`acc_mode="fixed48"`, erratum E5, `DEVICE_KV260`): per output element
+  the K products are summed exactly in a 48-bit window placed by the block's
+  exponent maxima `ea_max(i)`, `eb_max(j)` (A significands shifted to
+  `ma · 2^(15 − da)`, truncated below the window; B significands in two
+  levels `mb · 2^(9(l+1) − db)` for `9l < db ≤ 9(l+1)`, level 1 keeping the
+  tail truncated), `(acc0 · 2^9 + acc1) · 2^(ea_max + eb_max − 301)` rounded
+  once to binary32 (RNE, subnormals, overflow), NaN / ±inf as sticky flags.
+  Bit-exact between `sim/tcta/machine.py::_mma_sum_fixed48` and
+  `mma_cell.sv` + `fix_to_f32.sv` on every harness program (GEMM, the MMA
+  forms, the gather test). Then `S' = S ∘ mask` (MMA.MASKED) and
+  `fl(old + S')` if accumulate, in binary32 as E1. Measured against E1's
+  sequential binary32 sums (`tests/test_sim.py`, 64×128×128): Gaussian data
+  max 0.5 ulp, outlier row / column 0.5 ulp, A spanning 2^±20 mean 216 ulp
+  (7.7e-7 of the `max|A row| · max|B col|` bound, binary32's own sequential
+  error 6.1e-7), softmax·V mean 52 ulp (2.15e-7 vs 1.77e-7); a cancelling
+  row `[1e8, −1e8, 1, 1, 3e-5] · 1` gives 0 where binary32 gives 2.00003
+  (both within 2^-23 of the bound); specials, subnormal and overflow results
+  identical to binary32.
+- MMA (`acc_mode="f32"`, erratum E1, the `ACC_F32` array of `mma_pe`):
+  `S = fl(…fl(fl(0 + a0·b0) + a1·b1)… + a_{K−1}·b_{K−1})`, products rounded
+  to binary32 first (exact unless subnormal), then mask and `+ old` as above.
 - Row sums: 16 lane partials, lane l over columns `l, l+16, …` in order, then
   a binary tree over lanes.
 - Elementwise ops: binary32 RNE, one rounding per op, same operand order as
@@ -174,7 +209,7 @@ simulator-only.
 
 ## 4. Testbench
 
-`test/README.md`: the nine programs (five positive, the front-end
+`test/README.md`: the ten programs (six positive, the front-end
 micro-test, three negative), the vector directory, the memory model, the
 trace format (`cycle queue SYNC|ISSUE|DONE op pc`, `cycle FE DISP op pc`),
 `compare.py`'s checks and `calibrate.py`. `make -C rtl/test all` runs
