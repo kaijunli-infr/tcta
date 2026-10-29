@@ -16,8 +16,9 @@
 // T_blk + j; cell (i, j) then meets product k at T_blk + i + j + k + 2 and holds its finished sums for one cycle
 // at T_blk + i + j + K + 4, when lane collector j picks them (a 16:1 mux over the rows of its column) into the
 // result FIFO (16 LUT-RAM lanes, two blocks of rows). The converter stage turns a FIFO row into float32 eight
-// lanes per cycle; the writeback then applies the mask (add / mul), adds the old accumulator (accumulate) and
-// writes the row. `wide` and `row0` are address arithmetic there.
+// lanes per cycle; the writeback then applies the mask (add / mul) and adds the old accumulator (accumulate) on
+// eight adders / multipliers in two lane halves each (phase 8 L3; 16 adders before), and writes the row. `wide`
+// and `row0` are address arithmetic there.
 module mma_unit
   import tcta_isa_pkg::*;
   import tcta_pkg::*;
@@ -58,7 +59,9 @@ module mma_unit
   localparam int ENTRIES = FIX_K_MAX / BANKS;   // slices per buffered row / column
   localparam int ENT_W = $clog2(ENTRIES);
   localparam int KW = $clog2(FIX_K_MAX);
-  localparam int CV_LANES = 8;                  // fixed -> f32 converters: a row in BANKS / CV_LANES cycles
+  localparam int CV_LANES = 8;                  // fixed -> f32 converters: a row in BANKS / CV_LANES cycles. Kept at 8 in
+                                                // phase 8 L3: 4 lanes (-2.5 k LUTs) saturate at P = 64 (16 rows x 4 cycles) and
+                                                // cost FA's 64x64x64 products +15.6 % (measured 1148 -> 1327)
   localparam int MUL_LANES = 8;                 // mask multipliers: a row in BANKS / MUL_LANES cycles
   localparam int RFW = 3 + FIX_ACC_W;           // a result FIFO lane entry: {flags, acc}
 
@@ -311,27 +314,35 @@ module mma_unit
 
   // ---------------------------------------------------------------- writeback
   typedef struct packed { logic [3:0] i; logic [9:0] i0; logic [9:0] j0; slice_t data; } rrow_t;
-  typedef enum logic [2:0] {W_IDLE, W_MASK, W_MASK_WAIT, W_MCALC, W_MCALC2, W_OLD, W_OLD_WAIT, W_WRITE} wstate_t;
+  typedef enum logic [3:0] {W_IDLE, W_MASK, W_MASK_WAIT, W_MCALC, W_MCALC2, W_OLD, W_OLD_WAIT, W_ADD, W_WRITE} wstate_t;
+  // Phase 8 L3: ADD_LANES adders and MUL_LANES multipliers work on a row in two lane halves: the mask op in W_MCALC /
+  // W_MCALC2, the old-accumulator add in W_ADD (lanes 0 .. 7, registered in s_outq) and W_WRITE (lanes 8 .. 15, straight
+  // into the write data). One cycle more per accumulated or mask-added row than the 16-adder version.
+  localparam int ADD_LANES = BANKS / 2;
   wstate_t wst;
   rrow_t   wrow;
   slice_t  s_masked, s_out, mask_d, old_d;
+  logic [31:0] s_outq [ADD_LANES];
   int      popped;
-  logic [31:0] add_a [BANKS], add_b [BANKS], add_y [BANKS], mk_mul [MUL_LANES];
-  int      mul_half;
-  for (genvar b = 0; b < BANKS; b++) begin : g_wb
-    // one adder bank: the mask add (W_MCALC) and the old-accumulator add (W_WRITE) never happen in the same cycle
+  logic [31:0] add_a [ADD_LANES], add_b [ADD_LANES], add_y [ADD_LANES], mk_mul [MUL_LANES];
+  int      wb_half;
+  logic    wb_mask_op;
+  for (genvar b = 0; b < ADD_LANES; b++) begin : g_wb
+    // one adder bank: the mask add (W_MCALC, W_MCALC2) and the old-accumulator add (W_ADD, W_WRITE) never happen in the same cycle
     f32_add u_add (.a(add_a[b]), .b(add_b[b]), .sub(1'b0), .y(add_y[b]));
   end
   for (genvar b = 0; b < MUL_LANES; b++) begin : g_mul
-    f32_mul u_mm (.a(wrow.data[mul_half * MUL_LANES + b]), .b(mask_d[mul_half * MUL_LANES + b]), .y(mk_mul[b]));
+    f32_mul u_mm (.a(wrow.data[wb_half * MUL_LANES + b]), .b(mask_d[wb_half * MUL_LANES + b]), .y(mk_mul[b]));
   end
   always_comb begin
-    mul_half = (wst == W_MCALC2) ? 1 : 0;
-    for (int b = 0; b < BANKS; b++) begin
-      add_a[b] = (wst == W_MCALC) ? wrow.data[b] : old_d[b];
-      add_b[b] = (wst == W_MCALC) ? mask_d[b] : s_masked[b];
-      s_out[b] = accumulate ? add_y[b] : s_masked[b];
+    wb_half = (wst == W_MCALC2 || wst == W_WRITE) ? 1 : 0;
+    wb_mask_op = (wst == W_MCALC) || (wst == W_MCALC2);
+    for (int b = 0; b < ADD_LANES; b++) begin
+      add_a[b] = wb_mask_op ? wrow.data[wb_half * ADD_LANES + b] : old_d[wb_half * ADD_LANES + b];
+      add_b[b] = wb_mask_op ? mask_d[wb_half * ADD_LANES + b] : s_masked[wb_half * ADD_LANES + b];
     end
+    for (int b = 0; b < BANKS; b++)
+      s_out[b] = !accumulate ? s_masked[b] : (b < ADD_LANES) ? s_outq[b] : add_y[b - ADD_LANES];
   end
   function automatic logic [11:0] wb_slot(input int j0);
     return tref_slot(acc_t) + 12'(wide ? j0 / T_N : 0);
@@ -396,6 +407,7 @@ module mma_unit
         for (int j = 0; j < C; j++) sl_eb[s][j] <= 8'd1;
       end
       rf_rd <= 0; rf_cnt <= 0; wst <= W_IDLE; wrow <= '0; s_masked <= '0; mask_d <= '0; old_d <= '0;
+      for (int b = 0; b < ADD_LANES; b++) s_outq[b] <= '0;
       cv_busy <= 0; cv_v <= 0; cv_half <= 0; cv_row <= '0; cv_i0 <= 0; cv_j0 <= 0; cv_i <= 0;
       for (int i = 0; i < R; i++) begin
         rs_v[i] <= 0; rs_half[i] <= '0; rs_slot[i] <= 0; r_act[i] <= 0; r_k[i] <= 0; r_half[i] <= '0; r_slot[i] <= 0;
@@ -569,21 +581,20 @@ module mma_unit
         end
         W_MASK: if (wb_grant) wst <= W_MASK_WAIT;
         W_MASK_WAIT: if (wb_rvalid) begin mask_d <= wb_rdata; wst <= W_MCALC; end
-        W_MCALC: begin
-          if (mask_mul) begin
-            for (int b = 0; b < MUL_LANES; b++) s_masked[b] <= mk_mul[b];
-            wst <= W_MCALC2;
-          end else begin
-            for (int b = 0; b < BANKS; b++) s_masked[b] <= add_y[b];
-            wst <= accumulate ? W_OLD : W_WRITE;
-          end
+        W_MCALC: begin                                             // lanes 0 .. 7 of the mask add / mul
+          for (int b = 0; b < ADD_LANES; b++) s_masked[b] <= mask_mul ? mk_mul[b] : add_y[b];
+          wst <= W_MCALC2;
         end
-        W_MCALC2: begin
-          for (int b = 0; b < MUL_LANES; b++) s_masked[MUL_LANES + b] <= mk_mul[b];
+        W_MCALC2: begin                                            // lanes 8 .. 15
+          for (int b = 0; b < ADD_LANES; b++) s_masked[ADD_LANES + b] <= mask_mul ? mk_mul[b] : add_y[b];
           wst <= accumulate ? W_OLD : W_WRITE;
         end
         W_OLD: if (wb_grant) wst <= W_OLD_WAIT;
-        W_OLD_WAIT: if (wb_rvalid) begin old_d <= wb_rdata; wst <= W_WRITE; end
+        W_OLD_WAIT: if (wb_rvalid) begin old_d <= wb_rdata; wst <= W_ADD; end
+        W_ADD: begin                                               // lanes 0 .. 7 of old + result; 8 .. 15 add in W_WRITE
+          for (int b = 0; b < ADD_LANES; b++) s_outq[b] <= add_y[b];
+          wst <= W_WRITE;
+        end
         W_WRITE: if (wb_grant) wst <= W_IDLE;
         default: wst <= W_IDLE;
       endcase

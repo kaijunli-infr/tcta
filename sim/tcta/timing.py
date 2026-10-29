@@ -97,13 +97,16 @@ class DeviceTiming:
     #   per B block into four buffer halves, a half ready mma_fill_ready_latency after its last read and free again
     #   K + mma_release_latency after the last block start that used it; blocks start every P = max(K, 16) cycles
     #   while the result FIFO (mma_rf_rows) has room for a block; a block's row i lands in the FIFO K +
-    #   mma_result_latency + i cycles after its start; the converter takes 2 cycles per row and the writeback
+    #   mma_result_latency + i cycles after its start; the converter takes mma_cv_row_cycles per row and the writeback
     #   mma_wb_row_cycles (+ extras for accumulate / masked add / masked mul; padding rows cost the converter only).
+    #   Phase 8 L3 (KV260): 8 writeback adders in two lane halves (+1 per accumulated or mask-added row); the converter
+    #   keeps 8 lanes (4 lanes would saturate at P = 64).
     #   The queue issues the next instruction the cycle after the previous one completes (no drain overlap).
     mma_setup_cycles: int = 2
     mma_fill_ready_latency: int = 2
     mma_release_latency: int = 20
     mma_result_latency: int = 21
+    mma_cv_row_cycles: int = 2
     mma_wb_row_cycles: int = 2
     mma_wb_acc_extra: int = 2
     mma_wb_mask_extra: int = 3
@@ -167,7 +170,7 @@ KV260 = DeviceTiming(
     dma_load_setup_cycles=5, dma_store_setup_cycles=4, dma_load_row_overhead=2, dma_store_row_overhead=1, dma_store_slice_cycles=2,
     vec_op_overhead_cycles=6, sfu_slice_cycles=6, sfu_sum_slice_extra=1, sfu_sum_row_extra=1, vec_reduce_extra=4, sfu_fused_sub_sum=True,
     mma_setup_cycles=2, mma_fill_ready_latency=2, mma_release_latency=20, mma_result_latency=21,
-    mma_wb_row_cycles=2, mma_wb_acc_extra=2, mma_wb_mask_extra=3, mma_wb_mask_mul_extra=4, mma_rf_rows=32,
+    mma_cv_row_cycles=2, mma_wb_row_cycles=2, mma_wb_acc_extra=3, mma_wb_mask_extra=4, mma_wb_mask_mul_extra=4, mma_rf_rows=32,
     fe_word_cycles=3, fe_sync_word_cycles=3, fe_ext_word_cycles=2, fe_ext_entry_cycles=1, fe_mod_entry_cycles=1,
     loop_overhead_cycles=2, vcount_to_loop_latency=1, loop_r_count_cycles=1, iq_depth=16,
     push_visible_cycles=1,

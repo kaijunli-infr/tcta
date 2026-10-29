@@ -492,7 +492,7 @@ def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, m
     * blocks (row-block major) start every P = max(K, 16) cycles when both halves are ready and the result FIFO
       holds at most mma_rf_rows - 16 committed rows.
     * a block's row i lands in the result FIFO K + mma_result_latency + i cycles after its start; the converter
-      takes a row per 2 cycles and hands it to the writeback, which costs mma_wb_row_cycles per row (+ extras for
+      takes a row per mma_cv_row_cycles and hands it to the writeback, which costs mma_wb_row_cycles per row (+ extras for
       accumulate / masked add / masked mul); padding rows of the last row block cost the converter only.
     * completion: 2 cycles (metadata write, done) after the last row is written.
     """
@@ -517,7 +517,7 @@ def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, m
     blk, last_start, committed = 0, None, 0
     arrivals: list = []                                 # (cycle visible in the FIFO, padding row) per result row
     ai, rf_cnt = 0, 0                                   # rows arrived, rows in the FIFO
-    cv_busy_until, cv_v, cv_padding = 0, False, False   # converter: end of its 2 cycles, row waiting for the writeback
+    cv_busy_until, cv_v, cv_padding = 0, False, False   # converter: end of its cycles, row waiting for the writeback
     cv_pop_at: list = []
     wst_idle_at, popped = 0, 0
 
@@ -572,13 +572,13 @@ def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, m
                 a_busy[ha] = True; a_free_at[ha] = t + release
                 if jb == nbj - 1: a_ready[ha] = False
                 committed += R; last_start = t; blk += 1
-        # ---- converter (2 cycles per row) and writeback ----
+        # ---- converter (mma_cv_row_cycles per row) and writeback ----
         cv_take = wst_idle and cv_v
         if cv_take:
             cv_v = False; popped += 1
             wst_idle_at = t + 1 + (0 if cv_padding else wb_states)
         if rf_cnt > 0 and not cv_busy and (not cv_v or cv_take):
-            cv_busy_until = t + 2; cv_pop_at.append(t + 2)
+            cv_busy_until = t + T.mma_cv_row_cycles; cv_pop_at.append(t + T.mma_cv_row_cycles)
             cv_padding = arrivals[ai - rf_cnt][1]
         if cv_busy_until == t + 1:
             cv_v = True                                  # the converted row is offered from the next cycle on

@@ -124,9 +124,11 @@ finishes at `T + K + 5 + i + j` and a one-hot collector per lane writes
 the block start). A converter (8 `fix_to_f32` lanes, 2 cycles per row)
 rounds each row once to binary32 with the block's exponent maxima; the
 writeback FSM takes one converted row at a time: mask (`MMA.MASKED`: a mask
-slice read, then one add cycle or two multiply cycles on 8 multipliers),
-`+ old` (accumulate: a read of the destination slice, 2 more cycles), the
-write — 2 cycles per row plain, 4 accumulate, 5 masked add, 6 masked mul;
+slice read, then two add or multiply cycles on 8 adders / 8 multipliers),
+`+ old` (accumulate: a read of the destination slice, then the add in two
+lane halves, 3 more cycles), the write — 2 cycles per row plain, 5
+accumulate, 6 masked add, 6 masked mul (phase 8 L3: 8 adders instead of
+16, +1 cycle on accumulate and masked add);
 padding rows of the last row block cost the converter only. `wide` and
 `row0` are address arithmetic there; A from ACC reads the BF16 payload
 written by `VCVT` in place. Faults: K = 0, K > 128 or a bad scratchpad

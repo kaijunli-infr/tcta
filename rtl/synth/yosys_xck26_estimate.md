@@ -7,17 +7,17 @@ instance counts. `own` = the module without its children; `total` = with them. N
 
 | cell | count | KV260 budget | used |
 |---|---|---|---|
-| LUT | 154614 | 117120 | 132.0 % |
+| LUT | 148864 | 117120 | 127.1 % |
 | MUXF | 0 |  |  |
-| FF | 40397 | 234240 | 17.2 % |
-| CARRY | 8442 |  |  |
+| FF | 40654 | 234240 | 17.4 % |
+| CARRY | 8147 |  |  |
 | DSP | 624 | 1248 | 50.0 % |
 | BRAM36 | 192 | 144 | 133.3 % |
 | BRAM18 | 214 |  |  |
 | LUTRAM | 1196 |  |  |
 | SRL | 0 |  |  |
 | other | 5095 |  |  |
-| **LUT-eq** (LUT + LUT-RAM as LUT6) | **164182** | 117120 | **140.2 %** |
+| **LUT-eq** (LUT + LUT-RAM as LUT6) | **158432** | 117120 | **135.3 %** |
 
 other cells: INV 5095
 
@@ -25,10 +25,10 @@ other cells: INV 5095
 
 | module | instances | own LUT | own MUXF | own FF | own CARRY | own DSP | own BRAM36 | own LUTRAM | own LUT-eq | total LUT | total MUXF | total FF | total CARRY | total DSP | total BRAM36 | total LUTRAM | total LUT-eq |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| tcta_core | 1 | 3592 | 0 | 107 | 19 | 0 | 0 | 0 | 3592 | 154614 | 0 | 40397 | 8442 | 624 | 192 | 1196 | 164182 |
+| tcta_core | 1 | 3592 | 0 | 107 | 19 | 0 | 0 | 0 | 3592 | 148864 | 0 | 40654 | 8147 | 624 | 192 | 1196 | 158432 |
 | vec_unit | 1 | 18819 | 0 | 4862 | 1106 | 2 | 0 | 40 | 19139 | 53581 | 0 | 4862 | 3006 | 50 | 0 | 40 | 53901 |
-| mma_unit | 1 | 25989 | 0 | 8571 | 2198 | 9 | 0 | 80 | 26629 | 51781 | 0 | 29563 | 3302 | 537 | 0 | 896 | 58949 |
-| f32_add | 40 | 643 | 0 | 0 | 37 | 0 | 0 | 0 | 643 | 643 | 0 | 0 | 37 | 0 | 0 | 0 | 643 |
+| mma_unit | 1 | 25383 | 0 | 8828 | 2199 | 9 | 0 | 80 | 26023 | 46031 | 0 | 29820 | 3007 | 537 | 0 | 896 | 53199 |
+| f32_add | 32 | 643 | 0 | 0 | 37 | 0 | 0 | 0 | 643 | 643 | 0 | 0 | 37 | 0 | 0 | 0 | 643 |
 | dma_load | 1 | 5505 | 0 | 1654 | 316 | 11 | 0 | 40 | 5825 | 18082 | 0 | 1654 | 1176 | 27 | 0 | 40 | 18402 |
 | f32_mul | 24 | 541 | 0 | 0 | 26 | 2 | 0 | 0 | 541 | 541 | 0 | 0 | 26 | 2 | 0 | 0 | 541 |
 | dequant_elem | 16 | 147 | 0 | 0 | 0 | 0 | 0 | 0 | 147 | 747 | 0 | 0 | 45 | 1 | 0 | 0 | 747 |
@@ -61,7 +61,7 @@ other cells: INV 5095
 
 - tcta_core: dma_load ×1, dma_store ×1, front_end ×1, mma_unit ×1, queue ×5, scratchpad_INP ×1, scratchpad_WGT ×1, scratchpad_ACC ×1, scratchpad_VEC ×1, scratchpad_STATE ×1, tile_meta ×1, token_net ×1, vec_unit ×1
 - vec_unit: f32_add ×24, f32_mul ×16, f32_to_bf16 ×16, i32_to_f32 ×2, sfu_lane ×4
-- mma_unit: f32_add ×16, f32_mul ×8, fix_to_f32 ×8, mma_cell ×256, mma_opbuf_a ×1, mma_opbuf ×1
+- mma_unit: f32_add ×8, f32_mul ×8, fix_to_f32 ×8, mma_cell ×256, mma_opbuf_a ×1, mma_opbuf ×1
 - dma_load: dequant_elem ×16, f32_to_bf16 ×16, f32_to_int_trunc ×1
 - dequant_elem: f32_mul_e4m3 ×1, f32_to_bf16 ×1, i32_to_f32 ×1
 - dma_store: f32_to_bf16 ×16, f32_to_i32_rne ×16, f32_to_int_trunc ×1

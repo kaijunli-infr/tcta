@@ -22,16 +22,18 @@ rules stay available as `KV260_PLAN` and are unchanged for `CONFIG_C`.
 | program | RTL cycles | model, planning (`KV260_PLAN`) | model, calibrated (`KV260`) |
 |---|---|---|---|
 | dma_copy (LOAD f32 64×64, STORE) | 4560 | 2248 (−50.7 %) | 4557 (−0.1 %) |
-| mma (2 LOAD, 4 MMA forms, VCVT, 2 STORE) | 30480 | 24280 (−20.3 %) | 30478 (−0.0 %) |
+| mma (2 LOAD, 4 MMA forms, VCVT, 2 STORE) | 30512 | 24280 (−20.4 %) | 30510 (−0.0 %) |
 | vec (the FA VEC chain on one tile) | 22317 | 14056 (−37.0 %) | 22314 (−0.0 %) |
 | **gemm** (compiler GEMM, 50×100·100×96) | **11144** | 5633 (−49.5 %) | **11141 (−0.0 %)** |
-| **fa** (compiler FA, 4 KV tiles of 64) | **39371** | 27856 (−29.2 %) | **39370 (−0.0 %)** |
+| **fa** (compiler FA, 4 KV tiles of 64) | **39919** | 27856 (−30.2 %) | **39918 (−0.0 %)** |
 | loop (front-end micro-test) | 814 | 1096 (+34.6 %) | 815 (+0.1 %) |
 
 Re-measured after phase 8 K0.2 / K0.3 (the shared VEC reducer, the
-fixed-point MMA unit, 2026-10-29): every MMA shape matches the RTL exactly
-(§1.2) and the reductions within 1 cycle (§1.3). Phase-7 numbers: mma 29952,
-vec 22177, gemm 11291, fa 38543 (model +0.3 %).
+fixed-point MMA unit) and L1–L3 (2026-10-29; L3's eight writeback adders
+cost one cycle per accumulated row: mma 30480 → 30512, fa 39371 → 39919, the
+rest unchanged): every MMA shape matches the RTL exactly (§1.2) and the
+reductions within 1 cycle (§1.3). Phase-7 numbers: mma 29952, vec 22177,
+gemm 11291, fa 38543 (model +0.3 %).
 
 GEMM and FA are within 10 % (the J5 bar), within 0.3 % in fact, but only
 after the rule changes of §1: with the planning rules the model
@@ -92,7 +94,7 @@ program ran on RTL in this phase).
 |---|---|---|
 | occupancy | `⌈M/16⌉·⌈N/16⌉·K` | blocks start every `P = max(K, 16)` once their operand halves are filled: identical for K ≥ 16 (phase 7's unit needed `ceil16(K)`, K = 100 cost 112) |
 | operand fills | — | A: `16·⌈K/16⌉` slice reads per row block; B: `K` reads per block (`MMA.T`: `16·⌈K/16⌉`); four buffer halves each, filled back to back ahead of the array, a half ready 2 cycles after its last read and free `K + 20` cycles after the last block start that used it. The first block starts `max(16·⌈K/16⌉, K) + 3` cycles after issue; the fills otherwise hide behind `P` except `MMA.T` with K not a multiple of 16 (fill-bound at `16·⌈K/16⌉` per block) |
-| drain / `mma_latency` | 8 | row i of a block lands in the result FIFO `K + 21 + i` cycles after its start (`mma_result_latency = 21`); a converter takes 2 cycles per row and the writeback 2 cycles per row plain (`+2` accumulate: `W_OLD, W_OLD_WAIT`; `+3` masked add, `+4` masked mul); padding rows of the last row block cost the converter only: drain **57** plain on a full last block (`K + 21 + 2·16 + 4`), **89** accumulate |
+| drain / `mma_latency` | 8 | row i of a block lands in the result FIFO `K + 21 + i` cycles after its start (`mma_result_latency = 21`); a converter takes 2 cycles per row (`mma_cv_row_cycles`) and the writeback 2 cycles per row plain (`+3` accumulate: `W_OLD, W_OLD_WAIT, W_ADD` — phase 8 L3's eight adders add a row in two halves, `+2` before; `+4` masked add, `+4` masked mul); padding rows of the last row block cost the converter only: drain **57** plain on a full last block (`K + 21 + 2·16 + 4`), **105** accumulate |
 | result FIFO | — | 32 rows: a block starts only when ≤ 16 committed rows wait (`mma_rf_rows = 32`) |
 | next MMA | may start when the array is free (the drain overlaps) | the queue holds the next instruction until DONE (+1 cycle); no overlap |
 | A from ACC | — | same cost as A from INP (two read ports per bank) |
@@ -100,11 +102,11 @@ program ran on RTL in this phase).
 | instruction | RTL | calibrated model | planning model |
 |---|---|---|---|
 | MMA 64×128×128 (32 blocks, P 128) | 4284 | 4284 | 4104 |
-| MMA accumulate 64×128×128 | 4316 | 4316 | 4104 |
-| MMA, A from ACC, plain / accumulate | 4284 / 4316 | 4284 / 4316 | 4104 |
+| MMA accumulate 64×128×128 | 4332 | 4332 | 4104 |
+| MMA, A from ACC, plain / accumulate | 4284 / 4332 | 4284 / 4332 | 4104 |
 | MMA 50×100×96 (GEMM: 24 blocks, P 100) | 2571 | 2571 | 2408 |
 | MMA.T 64×64×64 (FA QKᵀ: 16 blocks, P 64) | 1148 | 1148 | 1032 |
-| MMA accumulate 64×64×64 (FA PV) | 1299 | 1299 | 1032 |
+| MMA accumulate 64×64×64 (FA PV) | 1436 | 1436 | 1032 |
 
 `_rtl_mma_cycles` replays the unit cycle by cycle (fill engines, block
 scheduler, FIFO, converter, writeback FSM) with the constants above and
@@ -232,9 +234,10 @@ reproduce; the calibrated descriptor is `tcta.timing.KV260`.
    16-deep instruction queues it is never on GEMM's or FA's critical path
    (FA's front end finishes dispatching at cycle 36278 of 38543 only because
    the VEC queue was full), but a 1-word-per-cycle fetch is a cheap 3×.
-5. **The accumulate writeback binds at K ≤ 64** (FA PV +14 %): 4 cycles per
-   row. A read-modify-write that pipelines the old-value read with the
-   previous row's write would make it 2 and remove the bound.
+5. **The accumulate writeback binds at K ≤ 64** (FA PV +25 % after L3's
+   eight adders, +14 % before): 5 cycles per row. A read-modify-write that
+   pipelines the old-value read and the first adder half with the previous
+   row's write (K3) would make it 2 and remove the bound.
 
 Everything else the plan assumed about the core (block period, bank-parallel
 operand fetch, free syncs at the queue, token FIFO behaviour, the E1
