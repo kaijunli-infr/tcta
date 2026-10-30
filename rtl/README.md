@@ -37,7 +37,8 @@ rtl/
 | `VEC_LANES, SFU_LANES` | 16, 4 | 64, 16 | VEC pipe width, SFU pipe width |
 | `BANKS` | 16 | 64 | column banks per scratchpad (= MAC_COLS = VEC_LANES) |
 | `DMA_BYTES` | 16 | 32 | bytes per beat on the memory port |
-| `ROWBUF_BYTES` | 2048 | 2048 | DMA row buffer (one tile row at most) |
+| `ROWBUF_BYTES` | 2048 | 2048 | DMA row-buffer ring (one tile row at most; shorter rows run several deep) |
+| `DMA_ROWS_IN_FLIGHT` | 8 | 8 | LOAD / STORE row records in flight (phase 8 K1) |
 | `N_REGS` | 16 | 16 | front-end registers |
 | `IQ_DEPTH` | 16 | 16 | dispatched-but-unissued instructions per queue |
 | `LOOP_DEPTH` (front end) | 4 | 4 | nested LOOP levels |
@@ -89,16 +90,28 @@ reads at the top both granted. Per-slot metadata (`rows`, `cols`, `pready`;
 shapes, as the simulator's `TileState.valid`.
 
 **DMA** (`dma_load.sv`, `dma_store.sv`, `dequant.sv`), over the testbench
-memory model (fixed latency, `DMA_BYTES` per beat, any alignment). Row at a
-time: LOAD computes the row address (2D/3D strides folded by the assembler;
-`LOAD.IDX` reads the index slice every 16 rows, skips −1 rows with a zero fill,
-faults IDX_RANGE / IDX_SHORT), issues the row's beats (plus two scale beats
-for block-scaled formats), waits for them, then writes one 16-element slice
-per cycle through `dequant_elem` (`bf16 / f32 / i32 / f8.t / f8.b32 / f4.b32
-/ f4.r16`, RNE to BF16 for INP/WGT destinations) — `24 + beats + slices + 2`
-cycles per row at the harness's latency. STORE reads one slice per two
-cycles, converts (`f32`, `i32` = rint, `bf16` RNE), packs a byte row buffer
-and writes it as beats with byte enables (`2·slices + beats + 1` per row).
+memory model (fixed latency, `DMA_BYTES` per beat, any alignment). Rows are
+pipelined (phase 8 K1): each engine is a front and a back end around a
+row-buffer ring (`ROWBUF_BYTES`, LUT-RAM, rows at any offset) with
+`DMA_ROWS_IN_FLIGHT` row records. LOAD's front resolves the row (2D/3D strides
+folded by the assembler; `LOAD.IDX` reads the index slice every 16 rows,
+skips −1 rows with a zero record, faults IDX_RANGE / IDX_SHORT), allocates a
+record and ring space and issues the row's beats (plus two scale beats for
+block-scaled formats) at one per cycle, then moves to the next row; the
+responses land in the ring in order; the writer takes complete records and
+writes one 16-element slice per cycle through `dequant_elem` (`bf16 / f32 /
+i32 / f8.t / f8.b32 / f4.b32 / f4.r16`, RNE to BF16 for INP/WGT destinations).
+A row costs `max(beats + 1, slices + 1)` cycles in steady state (K0: `24 +
+beats + slices + 2`): a 64×128 BF16 tile loads at 14.5 B/cycle at the
+harness's 24-cycle latency (K0: 5.1). STORE's front reads one slice per cycle
+(the response lands in the ring the next cycle), converts (`f32`, `i32` =
+rint, `bf16` RNE, `f4.r16` quantised on egress: E4M3 scale per 16 channels
+and E2M1 codes bit-exact to `dtypes.encode_f4_r16_row`, four lanes, a slice
+in nine cycles), and the writer streams complete rows as beats with byte
+enables: `max(slices + 1, beats + 1)` per row (K0: `2·slices + beats + 1`).
+`LOAD.IDX` on `f8.b32` / `f4.b32` rows takes the row's scale slice from the
+grid at row `idx / 32`; scale codes index from the row's column 0 (Appendix
+A), so any `col0` works for every block-scaled format.
 The next row's fetch does not overlap the current row (the main gap to the
 plan: 5 B/cycle instead of 16 on a 64×128 BF16 tile).
 
@@ -220,8 +233,8 @@ compiles the formal properties as runtime assertions; `make lint` is clean
 under `-Wall`.
 
 Known deviations from the simulator, all recorded in the verdict:
-`STORE.2D f4.r16` and `LOAD.IDX` on block-scaled formats are BAD_QUALIFIER;
-`MMA` with `K = 0` is BAD_SHAPE; SEND/RECV are BAD_OPCODE (COMM stub); the
+`MMA` with `K = 0` is BAD_SHAPE (now erratum E6, also in the simulator);
+SEND/RECV are BAD_OPCODE (COMM stub); the
 memory port takes 16-byte beats at any alignment (a real AXI front adds the
 alignment logic outside the core).
 

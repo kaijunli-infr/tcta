@@ -1330,3 +1330,115 @@ after L3), `calibrate.py` within 0.1 % on every program, `pytest tests -q`
    The per-module `--only` flow (2–4 min per module) makes measuring
    cheaper than estimating; the fit report's remaining L5–L7 are still
    estimates.
+
+# Phase 8 K1 (DMA row pipelining and the two formats): verdict (2026-10-29)
+
+Per `docs/phase8-gate2-task.md` §1 K1: `dma_load` / `dma_store` keep ≥ 2
+rows in flight (`DMA_ROWS_IN_FLIGHT`), tile loads reach ≥ 14 B/cycle on the
+64×128 BF16 tile at the harness's 24-cycle latency (K0: 5.1); `STORE.2D
+f4.r16` (quantise on egress, Appendix A) and block-scaled `LOAD.IDX`
+(`f4.r16` KV rows; `f4.b32` rows with their scale slice) implemented,
+closing E6's two gaps; the `gather` program extended to cover both. The
+main session's E7 (the access table is normative hardware) is in the same
+commit, as asked.
+
+## Verdict: K1 DONE — 14.5 B/cycle (≥ 14), both formats bit-exact, FA −19.6 %
+
+| | K0 (row-serial) | K1 (row-pipelined) |
+|---|---|---|
+| LOAD.2D bf16 64×128 | 3205 cycles, 5.1 B/cycle | **1127, 14.5 B/cycle** |
+| LOAD.2D bf16 64×64 (FA K/V) | 2437, 3.4 | 611, 13.4 |
+| STORE.2D f32 64×128 | 3140, 10.4 | 2126, 15.4 |
+| GEMM 50×100·100×96 | 11144 | **5917 (−46.9 %)** |
+| FA (4 KV tiles) | 39919 | **32109 (−19.6 %)** |
+| mma / vec / dma_copy / loop | 30512 / 22317 / 4560 / 814 | 23230 / 14910 / 2228 / 489 |
+| gather | 27364 (K0.1, old program) | 22683 (K1 program: + f4.b32 gather, 3 f4.r16 stores) |
+| `dma_load` / `dma_store` (Yosys) | 18 402 / 7 377 LUT-eq | 18 425 / 11 418 LUT-eq |
+| core | 158 432 LUT-eq (135 % of the K26) | 162 496 (139 %) |
+
+- **Structure** (`rtl/src/dma_load.sv`, `dma_store.sv`): each engine is a
+  front and a back end around the K0.1 row buffer turned into a ring (128
+  beats, LUT-RAM, rows at any beat offset) with eight row records. LOAD's
+  front resolves a row (index, address, range check), allocates its record
+  and ring space, issues its beats at one per cycle and moves on; the
+  responses land in the ring in order (scale beats in a per-record side
+  memory); the writer takes complete records (a cumulative beat count) and
+  writes one dequantised slice per cycle, zero slices for −1 rows. STORE's
+  front reads one slice per cycle (the response is in the ring the next
+  cycle) and the writer streams complete rows as beats. A row costs
+  `max(beats + 1, slices + 1)` (LOAD) / `max(slices + 1, beats + 1)` (STORE)
+  in steady state; the memory latency is paid once per instruction. Rows
+  in flight: 8 records, or the ring (8 × 256 B rows, 4 × 512 B, 1 × 2048 B);
+  three rows cover the 24-cycle latency on 256 B rows, so the engine is
+  beat-bound on every family tile. The slot/ring limit binds only on rows
+  shorter than ~4 beats (`loop`'s 1×8 f32 load: 35 cycles, model 36).
+- **The two formats.** `LOAD.IDX` on `f8.b32` / `f4.b32` takes the row's
+  scale codes from the grid at row `idx / 32` (the simulator gained the
+  same, `machine._op_LOAD_IDX`); scale codes now index from the row's
+  column 0 for every block-scaled format (Appendix A), so any `col0` works —
+  the simulator's `LOAD.2D` on `*.b32` at a `col0` that is not a multiple of
+  32 followed the window instead of the row before (unreachable by the
+  compiler's programs, which tile at 128; now Appendix-A-exact in both).
+  `STORE.2D f4.r16` quantises on egress bit-exact to
+  `dtypes.encode_f4_r16_row`: the block scale is the E4M3 nearest of
+  RN(amax / 6) with the simulator's tie rule (ties to the smaller
+  magnitude; 1.0 for an all-zero or NaN block; 448 at the top; the divide
+  by 3 is an exact 26-bit integer division), the codes are the E2M1 nearest
+  of RN(x / scale) decided without a divider: with scale = S · 2^e (S the
+  4-bit E4M3 significand) and midpoints M_t / 4, RN(x / scale) > M_t / 4 iff
+  X · 2^(ex − e − 124) > M_t · S · (2^24 + 1), one shifter and seven 34-bit
+  comparators per lane; NaN / zero → 0, inf and x / 0 → ±0 with the sign
+  from `x < 0`. Four lanes, nine cycles per slice, a one-beat assembler for
+  the nibbles, the scale bytes and the zero padding to 64 B.
+- **Cost.** `dma_load` unchanged (18.4 k: the ring and the records replace
+  the one-row buffer and its wait states); `dma_store` +4.0 k for the
+  `f4.r16` path (the quantiser lanes, the amax tree, the assembler, the
+  scale-byte registers). Core 158.4 k → 162.5 k LUT-eq (139 % of the K26).
+  The path is cold on every family; trimming it (two lanes, sharing the
+  `f32_to_bf16` / `f32_to_i32` converters with the plain path) is a K8 item.
+- **Cycle model** (`sim/tcta/cycle.py::_rtl_dma_cycles`, `timing.py`):
+  the two-stage structure with `dma_load_row_overhead` 1,
+  `dma_store_row_overhead` 1, `dma_tail_cycles` 1, `dma_rows_in_flight` 8,
+  `dma_store_r16_slice_cycles` 9, `dma_idx_slice_cycles` 3 (the K0
+  `dma_store_slice_cycles` is gone); gathers charge the column window, the
+  index slices and the skipped rows on the front and the first index slice
+  before the back end starts. Every DMA row of the seven programs is
+  reproduced exactly except two: `LOAD.IDX f4.r16` 1195 vs 1193 and the
+  one-row 1×8 load 35 vs 36. Totals within 0.2 % on every program; the
+  planning model is now within 5 % on GEMM and 13 % on FA.
+- **Bugs found on the way** (both by the bit-exact harness, both fixed
+  before the commit): a SystemVerilog width rule — `int'(a − b)` on 8-bit
+  ring positions widens the operands before the subtraction, so the
+  occupancy went negative at the first wrap and a row was allocated into
+  space still being written (rows 4–10 of a 64×128 f32 store held rows
+  8–14); and the `f4.r16` lane thresholds built as `{ms, 25'd0}` (2^25, not
+  2^24), which halved every code while the scale bytes stayed right.
+
+Checks: lint clean; `make -C rtl/test all` 10/10 PASS (also `FORMAL=1`);
+`calibrate.py` within 0.2 % on all seven programs; `pytest tests -q` 95
+passed (the duration test updated to the K1 numbers); the bank-arbiter
+proof is untouched by K1 (no scratchpad change).
+
+## Findings for the main session
+
+1. **The DMA is no longer the gap.** With rows pipelined the planning
+   model's DMA rule (one request, latency once, 16 B/cycle) is within one
+   cycle per row of the RTL; GEMM is 5917 cycles (planned 5633), FA 32109
+   (planned 27856, the rest is the VEC vectors and the SFU: K2 / K3).
+2. **Latency is now paid once per instruction**, so the harness's 24-cycle
+   memory model matters less: a real LPDDR latency (say 100–200 cycles) adds
+   that once per LOAD, not per row, as long as rows in flight × beats per
+   row ≥ latency: 8 records × 16 beats = 128 cycles of cover on 256 B rows.
+   For a 200-cycle memory the records would have to go to 16 (the ring to
+   4 KB) to stay beat-bound; a parameter, not a redesign.
+3. **The access table held** (E7): the new engines added no (pad, client)
+   pair; the LOAD client still writes INP / WGT / ACC / VEC and reads VEC,
+   the STORE client reads ACC / VEC.
+4. **`f4.r16` egress costs 4 k LUTs for a cold path**; before K8, decide
+   whether the KV-write path stays four lanes or drops to two (≈ −1.5 k).
+   `LOAD.IDX` on block-scaled rows cost nothing: the scale-grid address is
+   the 2-D one with `idx` in place of `row0 + i`.
+5. **The width rule bit once and is worth a lint rule**: a sized cast
+   around a difference of narrow counters (`int'(a − b)`) silently widens
+   the operands. Both engines now size the difference first; the pattern
+   does not occur elsewhere in `rtl/src` (grep `int'(` over subtractions).

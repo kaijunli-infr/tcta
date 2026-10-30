@@ -358,24 +358,29 @@ class Machine:
 
     # ---------------- LOAD ----------------
     def _row_source(self, r: Region, i: int, j0: int, ncols: int):
-        """Return (raw bytes, block_scales) for row i, cols [j0, j0+ncols)."""
+        """Return (raw bytes, block_scales, col_phase) for row i, cols [j0, j0+ncols)."""
         q = r.dtype
         nb = dt.row_bytes_for(q, ncols)
         if q in ("f4.b32", "f8.b32"):
-            # payload: row i, element column j0 -> byte offset depends on packing
-            per_el = 0.5 if q == "f4.b32" else 1
-            addr = r.base + i * r.stride[0] + int(j0 * per_el)
+            # payload: row i from element column j0 (f4: the byte holding it, an odd j0 starts at its high nibble);
+            # scales: the row's codes from block j0 // 32 on (Appendix A: element c of the row uses code c // 32)
+            ph = j0 % 32
+            if q == "f4.b32":
+                addr = r.base + i * r.stride[0] + j0 // 2
+                nb = (ncols + (j0 & 1) + 1) // 2
+            else:
+                addr = r.base + i * r.stride[0] + j0
             raw = self.dram_read(addr, nb)
             sb = r.scales_base + (i // 32) * r.scales_stride + j0 // 32
-            scales = self.dram_read(sb, ncols // 32)
-            return raw, scales
+            scales = self.dram_read(sb, (ph + ncols + 31) // 32)
+            return raw, scales, ph
         if q == "f4.r16":
             addr = r.base + i * r.stride[0]  # whole row; j0 must be 0
             assert j0 == 0, "f4.r16 rows are loaded whole"
-            return self.dram_read(addr, nb), None
+            return self.dram_read(addr, nb), None, 0
         el = {"bf16": 2, "f32": 4, "i32": 4, "f8.t": 1}[q]
         addr = r.base + i * r.stride[0] + j0 * el
-        return self.dram_read(addr, nb), None
+        return self.dram_read(addr, nb), None, 0
 
     def _op_LOAD_2D(self, ins: Instr, q: Q) -> None:
         a = ins.args
@@ -386,8 +391,8 @@ class Machine:
             raise Fault("BAD_SHAPE", q, ins.pc, dst=repr(dst), rows=rows, cols=cols)
         row0, col0 = a.get("row0", 0), a.get("col0", 0)
         for i in range(rows):
-            raw, scales = self._row_source(r, row0 + i, col0, cols)
-            v = dt.dequant_row(r.dtype, raw, ncols=cols, scale_t=r.scale_t, block_scales=scales)
+            raw, scales, ph = self._row_source(r, row0 + i, col0, cols)
+            v = dt.dequant_row(r.dtype, raw, ncols=cols, scale_t=r.scale_t, block_scales=scales, col_phase=ph)
             if dst.sp in (SP.INP, SP.WGT):
                 v = dt.to_bf16(v)
             ts.data[i, :cols] = v
@@ -421,7 +426,11 @@ class Machine:
             if ri < 0 or ri >= r.shape[0]:
                 raise Fault("IDX_RANGE", q, ins.pc, i=i, index=int(ri), bound=r.shape[0])
             raw = self.dram_read(r.base + int(ri) * r.stride[0], row_bytes)
-            v = dt.dequant_row(r.dtype, raw, ncols=row_elems, scale_t=r.scale_t)   # whole row, then slice
+            scales = None
+            if r.dtype in ("f4.b32", "f8.b32"):
+                # erratum E6 / phase 8 K1: a block-scaled row takes its scale slice from the grid at row ri // 32
+                scales = self.dram_read(r.scales_base + (int(ri) // 32) * r.scales_stride, (row_elems + 31) // 32)
+            v = dt.dequant_row(r.dtype, raw, ncols=row_elems, scale_t=r.scale_t, block_scales=scales)   # whole row, then slice
             vv = v[col0: col0 + ncols]
             ts.data[i, :ncols] = dt.to_bf16(vv) if dst.sp in (SP.INP, SP.WGT) else vv
             self.stats["idx_rows"] += 1
@@ -436,6 +445,8 @@ class Machine:
         if rows > data.shape[0] or cols > data.shape[1]:
             raise Fault("BAD_SHAPE", q, ins.pc, src=repr(src), rows=rows, cols=cols)
         row0, col0 = a.get("row0", 0), a.get("col0", 0)
+        if r.dtype == "f4.r16" and cols % 16:
+            raise Fault("BAD_SHAPE", q, ins.pc, cols=cols, reason="f4.r16 rows are whole 16-channel scale blocks")
         for i in range(rows):
             v = data[i, :cols]
             if r.dtype == "f32":

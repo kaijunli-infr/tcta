@@ -86,13 +86,15 @@ ROW_ALIGN = 64  # bytes; mandatory for LOAD.IDX rows (ISA §6.1)
 
 
 def dequant_row(q: str, raw: np.ndarray, *, ncols: int, scale_t: float = 1.0,
-                block_scales: np.ndarray | None = None) -> np.ndarray:
+                block_scales: np.ndarray | None = None, col_phase: int = 0) -> np.ndarray:
     """Convert one DRAM row (uint8 bytes) to float32 logical values.
 
     ncols: number of logical elements expected.
     scale_t: per-tensor scale for f8.t.
-    block_scales: for f8.b32/f4.b32, the UE8M0 scale codes for this row's
-        32-column blocks (shape [ncols/32]).
+    block_scales: for f8.b32/f4.b32, the UE8M0 scale codes of the row's blocks from the
+        block that holds the window's first element on (Appendix A: element c of the row
+        uses code c // 32); col_phase = col0 % 32 places the window inside its first block
+        (phase 8 K1: a window at any col0; for f4.b32 an odd phase starts at a high nibble).
     """
     if q == "bf16":
         v = raw[: ncols * 2].view(np.uint16).astype(np.uint32) << 16
@@ -103,16 +105,15 @@ def dequant_row(q: str, raw: np.ndarray, *, ncols: int, scale_t: float = 1.0,
         return raw[: ncols * 4].view(np.int32).astype(np.float32)
     if q == "f8.t":
         return to_bf16(decode_e4m3(raw[:ncols]) * np.float32(scale_t))
-    if q == "f8.b32":
-        assert block_scales is not None and ncols % 32 == 0
-        v = decode_e4m3(raw[:ncols]).reshape(-1, 32)
-        s = decode_ue8m0(block_scales).reshape(-1, 1)
-        return to_bf16((v * s).reshape(-1))
-    if q == "f4.b32":
-        assert block_scales is not None and ncols % 32 == 0
-        v = decode_e2m1_packed(raw[: ncols // 2]).reshape(-1, 32)
-        s = decode_ue8m0(block_scales).reshape(-1, 1)
-        return to_bf16((v * s).reshape(-1))
+    if q in ("f8.b32", "f4.b32"):
+        assert block_scales is not None
+        if q == "f8.b32":
+            v = decode_e4m3(raw[:ncols])
+        else:
+            nibp = col_phase & 1
+            v = decode_e2m1_packed(raw[: (ncols + nibp + 1) // 2])[nibp: nibp + ncols]
+        s = decode_ue8m0(block_scales)[(col_phase + np.arange(ncols)) // 32]
+        return to_bf16(v * s)
     if q == "f4.r16":
         # Appendix A: ncols E2M1 packed (ncols/2 bytes) then ncols/16 E4M3 scales.
         assert ncols % 16 == 0

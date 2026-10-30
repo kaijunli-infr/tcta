@@ -149,7 +149,10 @@ def prog_loop(m):
 def prog_gather(m):
     """The DMA paths the other programs do not touch (phase 8 K0.1, the slice-addressed row buffers): LOAD.IDX of
     f32 rows at an odd column offset (two -1 rows), of bf16 rows and of f4.r16 rows at an odd, non-16-aligned
-    column offset (both as MMA B operands), STORE.IDX and an i32 STORE.2D."""
+    column offset (both as MMA B operands), STORE.IDX and an i32 STORE.2D. Phase 8 K1 (erratum E6): LOAD.IDX of
+    f4.b32 rows with their scale slice at an odd, non-32-aligned column offset (an MMA B operand), and STORE.2D
+    f4.r16 of three shapes (128, 32 and 48 columns: whole beats, a beat of scales alone, scales mid-beat; zero padding)."""
+    from common import f4_b32_bytes
     X = (100 * rng.standard_normal((32, 64))).astype(np.float32); m.dram_write(0, X)
     rx = Region(0, "f32", (32, 64), (256, 4))
     idx = np.full((1, 128), -1, np.float32)
@@ -167,6 +170,15 @@ def prog_gather(m):
     A = rng.standard_normal((64, 128)); ra = put_bf16(m, 1 << 20, A)
     ro = Region(1 << 21, "f32", (32, 32), (128, 4)); ro2 = Region(1 << 22, "i32", (16, 32), (128, 4))
     ro3 = Region(1 << 23, "f32", (64, 128), (512, 4)); ro4 = Region(1 << 24, "f32", (64, 128), (512, 4))
+    Wq = rng.standard_normal((256, 256)).astype(np.float32)                              # f4.b32: 128 B payload rows, [8, 8] scale grid
+    payload, scodes, _ = f4_b32_bytes(Wq)
+    m.dram_write(1 << 19, payload.reshape(-1)); m.dram_write((1 << 19) + 32768, scodes.reshape(-1))
+    rq = Region(1 << 19, "f4.b32", (256, 256), (128, 0), scales_base=(1 << 19) + 32768, scales_stride=8)
+    qidx = rng.permutation(256)[:128].astype(np.float32).reshape(1, -1); m.dram_write(1 << 15, qidx)
+    ridq = Region(1 << 15, "f32", (1, 128), (512, 4))
+    ro5 = Region((1 << 24) + (1 << 16), "f32", (64, 64), (256, 4))
+    ro6 = Region(1 << 25, "f4.r16", (64, 128), (128, 1)); ro7 = Region((1 << 25) + (1 << 16), "f4.r16", (16, 32), (64, 1))
+    ro8 = Region((1 << 25) + (1 << 17), "f4.r16", (64, 48), (64, 1))
     p = Program()
     p.load2d(VEC(8), ridx, 1, 128)
     p.loadidx(VEC(0), rx, VEC(8), 16, 256, 32, col0=5); p.push(Q.LOAD, Q.STORE)
@@ -174,13 +186,17 @@ def prog_gather(m):
     p.loadidx(WGT(0), rb, VEC(9), 128, 256, 128); p.push(Q.LOAD, Q.MMA)
     p.load2d(VEC(10), ridc, 1, 128)
     p.loadidx(WGT(1), rc, VEC(10), 128, 192, 128, col0=35); p.push(Q.LOAD, Q.MMA)
+    p.load2d(VEC(11), ridq, 1, 128)
+    p.loadidx(WGT(2), rq, VEC(11), 128, 128, 64, col0=37); p.push(Q.LOAD, Q.MMA)
     p.load2d(INP(0), ra, 64, 128); p.push(Q.LOAD, Q.MMA)
-    p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD)
+    p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD)
     p.mma(ACC(0), INP(0), WGT(0)); p.push(Q.MMA, Q.STORE)
     p.mma(ACC(1), INP(0), WGT(1)); p.push(Q.MMA, Q.STORE)
-    p.pop(Q.STORE, Q.LOAD); p.storeidx(VEC(0), ro, VEC(8), 16, 32); p.store2d(VEC(0), ro2, 16, 32)
-    p.pop(Q.STORE, Q.MMA); p.store2d(ACC(0), ro3, 64, 128)
-    p.pop(Q.STORE, Q.MMA); p.store2d(ACC(1), ro4, 64, 128)
+    p.mma(ACC(2), INP(0), WGT(2)); p.push(Q.MMA, Q.STORE)
+    p.pop(Q.STORE, Q.LOAD); p.storeidx(VEC(0), ro, VEC(8), 16, 32); p.store2d(VEC(0), ro2, 16, 32); p.store2d(VEC(0), ro7, 16, 32)
+    p.pop(Q.STORE, Q.MMA); p.store2d(ACC(0), ro3, 64, 128); p.store2d(ACC(0), ro6, 64, 128)
+    p.pop(Q.STORE, Q.MMA); p.store2d(ACC(1), ro4, 64, 128); p.store2d(ACC(1), ro8, 64, 48)
+    p.pop(Q.STORE, Q.MMA); p.store2d(ACC(2), ro5, 64, 64)
     p.finish()
     return p, [dict(kind="bitexact")], None
 

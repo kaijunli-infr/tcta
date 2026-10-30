@@ -1,4 +1,4 @@
-# Handoff: TileLang cut-off task, phases 1–7 and phase 8 K0, L1–L4 (2026-10-29)
+# Handoff: TileLang cut-off task, phases 1–7 and phase 8 K0, L1–L4, K1 (2026-10-29)
 
 For the session steering `docs/tilelang-lowering-cutoff-task.md`, its
 addendum, `docs/tilelang-phase2-moe-task.md`, `docs/tilelang-phase3-task.md`,
@@ -6,13 +6,16 @@ addendum, `docs/tilelang-phase2-moe-task.md`, `docs/tilelang-phase3-task.md`,
 `docs/phase6-mlp-task.md`, `docs/phase7-rtl-core-task.md` and
 `docs/phase8-amendment-fit.md` (K0: fit) and `docs/phase8-gate2-task.md`
 (the full phase-8 text: L1–L4, K1–K8). All deliverables of phases 1–7,
-phase 8 K0.1–K0.4 and L1–L3 exist (L4 analysed and not taken); the whole
-repo is green (`pytest tests -q`: **95 passed**; `make -C rtl/test all`:
-**10/10 PASS**, also with `FORMAL=1`, lint clean). The ISA is the main
-session's full file with errata E1–E6 (§16; E1 and E5 were assigned here,
-E2–E4 and E6 by the main session). **This repo is canonical**; since
-2026-10-29 the main session sends whole files (ISA, task), not deltas.
-Remote: `github.com/kaijunli-infr/tcta` (private).
+phase 8 K0.1–K0.4, L1–L3 and K1 exist (L4 analysed and not taken); the
+whole repo is green (`pytest tests -q`: **95 passed**; `make -C rtl/test
+all`: **10/10 PASS**, also with `FORMAL=1`, lint clean). The ISA is the main
+session's full file with errata E1–E7 (§16; E1 and E5 were assigned here,
+E2–E4, E6 and E7 by the main session; E7 makes the scratchpad access table
+normative hardware). **This repo is canonical**; since 2026-10-29 the main
+session sends whole files (ISA, task), not deltas. Remotes:
+`github.com/kaijunli-infr/tcta` (origin, private) and
+`github.com/datacrunch-research/tcta` (`datacrunch`, private, org team
+`silicon` reads).
 
 **Phase 1: PASS. Phase 2: PASS. Phase 3: PASS. Phase 4: PASS-WITH-CAVEATS
 (closed by v0.1.3, Gate 1 closed). Phase 5: PASS. Phase 6: PASS. Phase 7:
@@ -32,8 +35,30 @@ the Phase 8 K0 verdict section and `docs/phase8-k0-fit-report.md`.
 **Phase 8 L1–L3 done, L4 not taken** — 208 k → 158 k LUT-eq (135 % of the
 K26, 1.59× the fit budget) at +1.4 % on FA; the 8×8 fallback is no longer
 ruled out (needs Vivado ≥ 19 % under Yosys); see the Phase 8 L1–L4 verdict
-section. Next: K1–K8 of `docs/phase8-gate2-task.md`; the Vivado run (x86)
+section. **Phase 8 K1 done** — row-pipelined DMA engines (64×128 BF16 tile
+3205 → 1127 cycles, 14.5 B/cycle; GEMM 11144 → 5917, FA 39919 → 32109),
+`STORE.2D f4.r16` and block-scaled `LOAD.IDX` bit-exact; core 162.5 k
+LUT-eq (139 % of the K26, +4 k for the `f4.r16` quantiser); see the Phase 8
+K1 verdict section. Next: K2–K8 of `docs/phase8-gate2-task.md` (K3 per the
+L1–L4 verdict's finding 4: pipeline whole rows), the L5 measurement (8×8
+array on the 16-lane core) before the Vivado run; the Vivado run (x86)
 decides the lane width.
+
+## Phase 8 K1 in one paragraph
+
+Each DMA engine became a front and a back end around the K0.1 row buffer
+turned into a 128-beat ring with eight row records (`DMA_ROWS_IN_FLIGHT`):
+LOAD allocates a row, issues its beats and moves on while the responses
+land in the ring and a writer dequantises complete rows a slice per cycle;
+STORE reads a slice per cycle into the ring while a writer streams complete
+rows as beats. A row costs `max(beats + 1, slices + 1)`; the latency is paid
+once per instruction. `LOAD.IDX` on `f8.b32` / `f4.b32` takes the row's
+scale slice from the grid at `idx / 32` (simulator too); `STORE.2D f4.r16`
+quantises on egress bit-exact to the simulator without a divider (an
+integer comparison per E2M1 midpoint; four lanes, cold path, +4 k LUTs).
+The `gather` program covers both; the cycle model's DMA rule is the
+two-stage structure and reproduces every DMA row of the seven programs
+(two rows within 1–2 cycles). E7 (ISA §16) landed in the same commit.
 
 ## Phase 8 L1–L4 in one paragraph
 
@@ -129,15 +154,19 @@ needs an x86 machine (`rtl/synth/vivado_ooc.tcl`).
 | L2 | `rtl/src/tcta_pkg.sv` (`SP_READERS / SP_WRITERS`, one address), `scratchpad.sv`, `tcta_core.sv`; `rtl/formal/bank_arbiter.sby` | done (f4afb57): pads 40.8 k → 14.5 k, glue 8.4 k → 3.6 k |
 | L3 | `rtl/src/mma_unit.sv` (`W_ADD`, `ADD_LANES`); `sim/tcta/timing.py` (`mma_cv_row_cycles`, wb extras), `cycle.py`, `tests/test_cycle.py` | done (a8244a2): `mma_unit` 51.8 k → 46.0 k; FA +1.4 % |
 | L4 | `docs/phase8-k0-fit-report.md` §4b | not taken: 64 RAMB18 for ≈ −3 k; block RAM is the tighter resource |
+| K1 | `rtl/src/dma_load.sv`, `dma_store.sv`, `tcta_pkg.sv` (`DMA_ROWS_IN_FLIGHT`); `sim/tcta/machine.py` (`LOAD.IDX` b32, `_row_source` phase), `dtypes.py` (`col_phase`), `cycle.py::_rtl_dma_cycles`, `timing.py`; `gen_vectors.py` gather; `isa/isa-v0.1.md` E7 | done: 14.5 B/cycle (≥ 14), FA −19.6 %, GEMM −46.9 %; `dma_store` 7.4 k → 11.4 k (f4.r16) |
 
 ## Key numbers (v1 KV260 core, RTL cycles, 24-cycle harness memory latency)
 
-- GEMM 11144 (planning model 5633, calibrated 11141); FA 39919 (27856;
-  39918); dma_copy 4560, mma 30512, vec 22317, loop 814, gather 27364, all
-  within 0.1 % after calibration (K0: FA 39371, mma 30480; phase 7: GEMM
-  11291, FA 38543).
-- LOAD.2D row: 24 + beats + slices + 2 (64×128 BF16 → 3205, 5.1 B/cycle);
-  STORE.2D row: 2·slices + beats + 1 (64×128 f32 → 3140).
+- GEMM 5917 (planning model 5633, calibrated 5914); FA 32109 (27856;
+  32108); dma_copy 2228, mma 23230, vec 14910, loop 489, gather 22683, all
+  within 0.2 % after calibration (after L3: GEMM 11144, FA 39919, mma 30512,
+  vec 22317; K0: FA 39371; phase 7: GEMM 11291, FA 38543).
+- LOAD.2D: 5 + 24 + rows · max(beats + 1, slices + 1) + fill + 1 (64×128
+  BF16 → 1127, 14.5 B/cycle; K0 row-serial 3205); STORE.2D: 4 + rows ·
+  max(slices + 1, beats + 1) + fill + 1 (64×128 f32 → 2126; K0 3140);
+  STORE.2D f4.r16 9 cycles per slice (64×128 → 5069); LOAD.IDX bf16 128
+  rows 2239, f4.r16 1195, f4.b32 827.
 - MMA 64×128×128: 4284 (accumulate 4332) = first fill 131 + 32 blocks × 128
   + drain 57 (105); GEMM's MMA 2571 (P = 100); FA QKᵀ 1148, PV accumulate
   1436 (writeback-bound at P = 64: 5 cycles per row after L3).
@@ -146,10 +175,12 @@ needs an x86 machine (`rtl/synth/vivado_ooc.tcl`).
   1994 (plan 3072); row reductions +4 (shared reducer).
 - Front end: 3 cycles per word (PUSH/POP too), extension word 2 + 1 per
   entry (+1 per `_mod`), LOOP/ENDLOOP 2, LOOP r 1 + ⌈R/step⌉ after VCOUNT.
-- Synthesis (Yosys, cells only, after L1–L3): core 148 864 LUT + 1 196
-  RAM32M16 (= 158 432 LUT-eq, 135 % of the K26) / 40 654 FF / 624 DSP;
-  `mma_unit` 46 031 + 896 RAM32M16, `vec_unit` 53 581, pads 14 506, glue
-  3 592, queues 5 × (316 + 36 RAM32M16). After K0 it was 200 006 LUT + 1 016
+- Synthesis (Yosys, cells only, after K1): core 152 624 LUT + 1 234
+  RAM32M16 (= 162 496 LUT-eq, 139 % of the K26) / 41 550 FF / 622 DSP;
+  `mma_unit` 46 031 + 896 RAM32M16, `vec_unit` 53 581, `dma_load` 17 865 +
+  70 RAM32M16, `dma_store` 11 034 + 48 RAM32M16 (7 057 before the f4.r16
+  quantiser), pads 14 506, glue 3 592, queues 5 × (316 + 36 RAM32M16). After
+  L1–L3 it was 148 864 LUT + 1 196 RAM32M16 (= 158 432 LUT-eq). After K0 it was 200 006 LUT + 1 016
   RAM32M16 (= 208 134 LUT-eq) / 59 878 FF / 624 DSP; `mma_unit` 51 781 +
   896 RAM32M16 (cell 7 LUT + 2 DSP), `vec_unit` 53 581, scratchpads 40 789
   LUT + block RAM (4.4 Mbit, 122 RAMB36 minimum, Yosys uses 2×), `dma_load`
@@ -215,15 +246,17 @@ needs an x86 machine (`rtl/synth/vivado_ooc.tcl`).
 
 ## Not done / out of scope
 
-Fmax (Vivado on x86). Making the core fit the KV260 beyond L1–L3 (158 k
-LUT-eq): the lane-width decision of `docs/phase8-gate2-task.md` §0.3 from
-the Vivado number (16-lane core needs ≥ 37 % under Yosys, the 8×8 array
-≥ 19 %, the 8-lane configuration fits by Yosys), L5–L7 of the fit report
-§4 are estimates, L4 is analysed and not taken (§4b). Phase 8 K1–K8 of
-`docs/phase8-gate2-task.md` not started: MoE/MLA/KDA on the RTL (mechanical through
-`gen_vectors.py`; they measure the gather path, VTOPK, VGATE/VMASK/VSEL and
-the dequant formats the calibration takes from the FSMs), the RTL items the
-calibration surfaced (row prefetch / pipelined DMA, column-vector layout, SFU
-slice pipelining, pipelined accumulate writeback), COMM, multi-core, AXI/DDR,
-the board, power, ASIC synthesis. Open for the main session from phase 6: the arbiter's grant
-policy (convoy), `sfu_lanes`, request-burst queueing at 4 cores.
+Fmax (Vivado on x86). Making the core fit the KV260 beyond L1–L3 and K1
+(162.5 k LUT-eq): the lane-width decision of `docs/phase8-gate2-task.md`
+§0.3 from the Vivado number (16-lane core needs ≥ 39 % under Yosys, the 8×8
+array ≈ 22 %, the 8-lane configuration fits by Yosys), L5–L7 of the fit
+report §4 are estimates (L5 to be measured next), L4 is analysed and not
+taken (§4b). Phase 8 K2–K8 of `docs/phase8-gate2-task.md` not started:
+MoE/MLA/KDA on the RTL (mechanical through `gen_vectors.py`; they measure
+VTOPK, VGATE/VMASK/VSEL, which the calibration still takes from the FSMs),
+the RTL items the calibration surfaced (column-vector layout K2, SFU slice
+pipelining and the pipelined accumulate writeback K3, the front end K4),
+the `f4.r16` egress trim (K8 list), COMM, multi-core, AXI/DDR, the board,
+power, ASIC synthesis. Open for the main session from phase 6: the
+arbiter's grant policy (convoy), `sfu_lanes`, request-burst queueing at 4
+cores.

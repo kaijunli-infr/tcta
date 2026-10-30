@@ -21,26 +21,32 @@ rules stay available as `KV260_PLAN` and are unchanged for `CONFIG_C`.
 
 | program | RTL cycles | model, planning (`KV260_PLAN`) | model, calibrated (`KV260`) |
 |---|---|---|---|
-| dma_copy (LOAD f32 64×64, STORE) | 4560 | 2248 (−50.7 %) | 4557 (−0.1 %) |
-| mma (2 LOAD, 4 MMA forms, VCVT, 2 STORE) | 30512 | 24280 (−20.4 %) | 30510 (−0.0 %) |
-| vec (the FA VEC chain on one tile) | 22317 | 14056 (−37.0 %) | 22314 (−0.0 %) |
-| **gemm** (compiler GEMM, 50×100·100×96) | **11144** | 5633 (−49.5 %) | **11141 (−0.0 %)** |
-| **fa** (compiler FA, 4 KV tiles of 64) | **39919** | 27856 (−30.2 %) | **39918 (−0.0 %)** |
-| loop (front-end micro-test) | 814 | 1096 (+34.6 %) | 815 (+0.1 %) |
+| dma_copy (LOAD f32 64×64, STORE) | 2228 | 2248 (+0.9 %) | 2225 (−0.1 %) |
+| mma (2 LOAD, 4 MMA forms, VCVT, 2 STORE) | 23230 | 24280 (+4.5 %) | 23228 (−0.0 %) |
+| vec (the FA VEC chain on one tile) | 14910 | 14056 (−5.7 %) | 14907 (−0.0 %) |
+| **gemm** (compiler GEMM, 50×100·100×96) | **5917** | 5633 (−4.8 %) | **5914 (−0.1 %)** |
+| **fa** (compiler FA, 4 KV tiles of 64) | **32109** | 27856 (−13.2 %) | **32108 (−0.0 %)** |
+| loop (front-end micro-test) | 489 | 1096 (+124.1 %) | 490 (+0.2 %) |
+| gather (LOAD.IDX f32 / bf16 / f4.r16 / f4.b32, STORE.IDX, STORE f4.r16 ×3, i32) | 22683 | 17712 (−21.9 %) | 22679 (−0.0 %) |
 
-Re-measured after phase 8 K0.2 / K0.3 (the shared VEC reducer, the
-fixed-point MMA unit) and L1–L3 (2026-10-29; L3's eight writeback adders
-cost one cycle per accumulated row: mma 30480 → 30512, fa 39371 → 39919, the
-rest unchanged): every MMA shape matches the RTL exactly (§1.2) and the
-reductions within 1 cycle (§1.3). Phase-7 numbers: mma 29952, vec 22177,
-gemm 11291, fa 38543 (model +0.3 %).
+Re-measured after phase 8 K1 (2026-10-29, the row-pipelined DMA engines:
+dma_copy 4560 → 2228, mma 30512 → 23230, vec 22317 → 14910, gemm 11144 →
+5917, fa 39919 → 32109, loop 814 → 489; `gather` joins the table now that
+its formats are implemented): every DMA row matches the RTL exactly (§1.1),
+every MMA shape exactly (§1.2), the reductions within 1 cycle (§1.3). The
+planning model is now within 5 % on GEMM and the micro-programs and 13 % on
+FA (the VEC vectors and the SFU, §1.3–§1.4); the remaining gap is no longer
+the DMA. Earlier: after K0.2 / K0.3 / L1–L3 mma 30512, fa 39919; phase 7 mma
+29952, vec 22177, gemm 11291, fa 38543.
 
-GEMM and FA are within 10 % (the J5 bar), within 0.3 % in fact, but only
+GEMM and FA are within 10 % (the J5 bar), within 0.2 % in fact, but only
 after the rule changes of §1: with the planning rules the model
-underestimates the v0 core by 28–50 %. Per the decision rule of the task
-(§3) that is **PASS-WITH-CAVEATS** for J5; the caveat is that the v0 core is
-not the planned machine in three places (DMA, VEC vectors, front end), which
-§4 quantifies and §5 turns into the RTL work that would make it so.
+underestimated the v0 core by 28–50 % (phase 7); after K1 the DMA is the
+planned streaming machine and the planning model is within 5–13 %. Per the
+decision rule of the task (§3) that is **PASS-WITH-CAVEATS** for J5; the
+caveat is that the core is still not the planned machine in two places (VEC
+vectors, front end), which §4 quantifies and §5 turns into the RTL work that
+would make it so.
 
 ## 1. What was measured, parameter by parameter
 
@@ -50,43 +56,53 @@ issue → done duration; shapes come from the simulator's recording. Every
 constant below was read off that trace and then confirmed against the FSM
 that produces it (file:line in the right column).
 
-### 1.1 DMA (`dma_load.sv`, `dma_store.sv`)
+### 1.1 DMA (`dma_load.sv`, `dma_store.sv`; phase 8 K1 row-pipelined engines)
 
 | | planning (`KV260_PLAN`) | measured (`KV260`) |
 |---|---|---|
-| structure | one request per LOAD.2D/STORE.2D: `dram_latency_cycles` once, then `bytes / 16` cycles | **row-serial**: one row at a time, the next row's fetch starts after the current row is written (`S_ROW → S_FETCH → S_WAIT → S_DEQ → S_ROW`) |
-| LOAD.2D row | — | `24 (latency) + ⌈row_bytes/16⌉ beats + ⌈cols/16⌉ slice writes + 2` |
-| STORE.2D row | — | `2·⌈cols/16⌉ (slice read + convert) + ⌈row_bytes/16⌉ beats + 1` |
-| per instruction | 0 | LOAD 5 (descriptor, setup, metadata, done), STORE 4 |
+| structure | one request per LOAD.2D/STORE.2D: `dram_latency_cycles` once, then `bytes / 16` cycles | **two stages per instruction over a row-buffer ring** (`DMA_ROWS_IN_FLIGHT` = 8 records, 128 beats): LOAD's front allocates a row and issues its beats (`S_ROW → S_FETCH`), the writer takes complete rows and writes a slice per cycle (`W_WRITE`); STORE's front reads a slice per cycle (`S_RD`, the response lands in the ring the next cycle), the writer streams beats (`W_BEATS`). Instruction = setup + latency (LOAD) + the longer stage over all rows + the shorter stage once + 1 |
+| LOAD.2D row | — | fetch `beats + 1` (`dma_load_row_overhead`) ‖ write `⌈cols/16⌉ + 1`; block-scaled formats + 2 scale beats |
+| STORE.2D row | — | read `⌈cols/16⌉ + 1` ‖ write `beats + 1` (`dma_store_row_overhead`); `f4.r16`: read `9·⌈cols/16⌉` (`dma_store_r16_slice_cycles`) + scale chunks `⌈⌈cols/16⌉/8⌉` + padding beats + 3 |
+| gathers (`LOAD.IDX`, `STORE.IDX`) | one request per row | + 3 (`dma_idx_slice_cycles`) per index slice (16 rows) and 1 per skipped row on the front; the back end starts after the first index slice; a LOAD fetches the column window (not `row_bytes`) |
+| rows in flight | 16 (`max_outstanding_rows`) | 8 records (`dma_rows_in_flight`); a row holds its record for latency + fetch + write cycles, which bounds rows shorter than ~4 beats |
+| per instruction | 0 | LOAD 5 (`dma_load_setup_cycles`) + 1 (`dma_tail_cycles`), STORE 4 + 1 (`f4.r16`: + 0) |
 | `dram_latency_cycles` | 100 | 24 = the harness's `+MEMLAT` (the plan's fixed-latency port assumption; not a measured LPDDR) |
 | `bytes_per_cycle_per_channel` | 16 | 16 (one beat per cycle, confirmed) |
 | channels | 1 read + 1 write | same |
 
-Measured rows (RTL cycles; the formula reproduces every one exactly):
+Measured rows (RTL cycles; the formula reproduces every one exactly unless marked):
 
-| instruction | rows × row bytes | RTL | per row | formula |
+| instruction | rows × row bytes | RTL (K0) | per row | formula |
 |---|---|---|---|---|
-| LOAD.2D f32 64×64 | 64 × 256 | 2949 | 46 | 24 + 16 + 4 + 2 |
-| LOAD.2D bf16 64×128 | 64 × 256 | 3205 | 50 | 24 + 16 + 8 + 2 |
-| LOAD.2D bf16 128×128 | 128 × 256 | 6405 | 50 | |
-| LOAD.2D bf16 50×100 (GEMM A) | 50 × 200 | 2305 | 46 | 24 + 13 + 7 + 2 |
-| LOAD.2D bf16 100×96 (GEMM B) | 100 × 192 | 4405 | 44 | 24 + 12 + 6 + 2 |
-| LOAD.2D bf16 64×64 (FA K, V tiles) | 64 × 128 | 2437 | 38 | 24 + 8 + 4 + 2 |
-| STORE.2D f32 64×64 | 64 × 256 | 1604 | 25 | 2·4 + 16 + 1 |
-| STORE.2D f32 64×128 | 64 × 512 | 3140 | 49 | 2·8 + 32 + 1 |
-| STORE.2D f32 64×1 | 64 × 4 | 260 | 4 | 2·1 + 1 + 1 |
-| STORE.2D f32 50×96 | 50 × 384 | 1854 | 37 | 2·6 + 24 + 1 |
-| STORE.2D bf16 64×64 (FA O) | 64 × 128 | 1092 | 17 | 2·4 + 8 + 1 |
+| LOAD.2D f32 64×64 | 64 × 256 | 1123 (2949) | 17 | 5 + 24 + 64·max(16+1, 4+1) + 5 + 1 |
+| LOAD.2D bf16 64×128 | 64 × 256 | 1127 (3205) | 17 | 5 + 24 + 64·17 + 9 + 1 |
+| LOAD.2D bf16 128×128 | 128 × 256 | 2215 (6405) | 17 | |
+| LOAD.2D bf16 50×100 (GEMM A) | 50 × 200 | 738 (2305) | 14 | 13 beats + 1 |
+| LOAD.2D bf16 100×96 (GEMM B) | 100 × 192 | 1337 (4405) | 13 | 12 beats + 1 |
+| LOAD.2D bf16 64×64 (FA K, V tiles) | 64 × 128 | 611 (2437) | 9 | 8 beats + 1 |
+| LOAD.2D f32 1×8, 4×16 (loop) | 1 × 32, 4 × 64 | 35, 52 | — | 36 (+1), 52 |
+| LOAD.IDX bf16 128 rows × 128 cols | 128 × 256 | 2239 | 17 | front-bound: 128·17 + 8·3 |
+| LOAD.IDX f4.r16 128 rows × 128 cols at col0 35 | 128 × 192 | 1195 | 9 | write-bound: 128·(8+1) + 3; model 1193 (−0.2 %) |
+| LOAD.IDX f4.b32 128 rows × 64 cols at col0 37 | 128 × 128 | 827 | 6 | front-bound: 33 B → 3 beats + 2 scale beats + 1 |
+| LOAD.IDX f32 16 rows (2 skipped) × 32 cols at col0 5 | 14 × 256 | 164 | 9 | 14·(8+1) + 3 + 2 |
+| STORE.2D f32 64×64 | 64 × 256 | 1098 (1604) | 17 | 4 + 64·max(4+1, 16+1) + 5 + 1 |
+| STORE.2D f32 64×128 | 64 × 512 | 2126 (3140) | 33 | 32 beats + 1 |
+| STORE.2D f32 64×1 | 64 × 4 | 135 (260) | 2 | |
+| STORE.2D f32 50×96 | 50 × 384 | 1262 (1854) | 25 | |
+| STORE.2D bf16 64×64 (FA O) | 64 × 128 | 586 (1092) | 9 | |
+| STORE.2D i32 16×32 | 16 × 128 | 152 | 9 | |
+| STORE.2D f4.r16 64×128 | 64 × 128 | 5069 | 79 | 8·9 + 1 + 3 padding beats + 3 |
+| STORE.2D f4.r16 64×48 | 64 × 64 | 2121 | 33 | 3·9 + 1 + 2 + 3 |
+| STORE.2D f4.r16 16×32 | 16 × 64 | 393 | 24 | 2·9 + 1 + 2 + 3 |
+| STORE.IDX f32 16 rows (2 skipped) × 32 cols | 14 × 128 | 137 | 9 | 14·(8+1) + 3 + 3 + 1 |
 
-Effective bandwidth: 5.1 B/cycle on a 64×128 BF16 tile load, 3.4 B/cycle on
-the FA K/V tiles, 10.4 B/cycle on a 64×128 f32 store, against the planned 16
-B/cycle. The row engine spends the 24-cycle memory latency on every row; a
-one-row prefetch would make a row cost `max(latency, beats + slices + 2)`
-(26 → 38 instead of 50 → 38 for the FA tile, roughly 1.6–2×), full
-pipelining of rows would make it beats-bound (16 B/cycle, the plan). Gathers
-(`LOAD.IDX`, `STORE.IDX`) follow the same per-row cost plus 2 cycles per 16
-rows for the index slice and 1 per skipped row (from the FSM; no gather
-program ran on RTL in this phase).
+Effective bandwidth: 14.5 B/cycle on a 64×128 BF16 tile load (K0: 5.1),
+13.4 on the FA K/V tiles (3.4), 15.4 B/cycle on a 64×128 f32 store (10.4),
+against the planned 16 B/cycle; the missing beat per row is the front's
+allocation cycle (LOAD) and the writer's turnaround (STORE). The memory
+latency is paid once per instruction. The `f4.r16` egress path is slow by
+design (four quantiser lanes, nine cycles per slice: it is not on any
+family's loop; `rtl/README.md` §2).
 
 ### 1.2 MMA (`mma_unit.sv`, phase 8 K0.3 unit)
 
@@ -193,12 +209,14 @@ array), COMM link values (not built).
   exercised by GEMM/FA beyond the 14 cycles above).
 - **Instruction-queue occupancy** is counted when a head is processed, one
   cycle coarser than the RTL's issue.
-- **Formulas from the FSMs, not from a run**: `LOAD.IDX`, `STORE.IDX`
-  (per-row cost plus the index-slice reads), `VTOPK` (k passes), `VGATE`,
-  `VMASK`, `VSEL`, the dequant formats (same slice rate, more beats). Phase 8
-  (MoE/MLA/KDA on RTL) measures them.
-- **Memory latency** is the harness's 24 cycles; a real LPDDR port changes
-  the DMA numbers of §1.1 proportionally (24 of a row's 38–50 cycles).
+- **Formulas from the FSMs, not from a run**: `VTOPK` (k passes), `VGATE`,
+  `VMASK`, `VSEL`. Phase 8 K5 (MoE/MLA/KDA on RTL) measures them. The
+  gathers and the dequant formats are measured since K1 (§1.1, the `gather`
+  program).
+- **Memory latency** is the harness's 24 cycles; since K1 it is paid once
+  per LOAD instruction, not per row, so a real LPDDR port changes the DMA
+  numbers of §1.1 by its latency once per instruction (plus the rows-in-flight
+  bound on short rows).
 - **`mma_latency` (planning) is unused under `rtl_rules`**; the MMA cost is
   the replay of §1.2.
 
@@ -215,12 +233,11 @@ reproduce; the calibrated descriptor is `tcta.timing.KV260`.
 
 ## 4. What the measurements say about the plan
 
-1. **The v0 DMA is 3–5× slower than planned** on tile loads (5.1 and 3.4
-   B/cycle vs 16) because it is row-serial. GEMM on the KV260 is 11291 cycles
-   of which 6710 are the two loads; FA's nine K/V/Q loads are 21933 of its
-   38543 cycles on the LOAD queue. This is the single largest gap and the
-   first RTL item for phase 8 (§1.1: a one-row prefetch roughly halves it,
-   row pipelining removes it).
+1. **The DMA was 3–5× slower than planned** on tile loads (5.1 and 3.4
+   B/cycle vs 16) because it was row-serial; phase 8 K1 pipelined the rows
+   (14.5 and 13.4 B/cycle, a 64×128 BF16 tile 3205 → 1127 cycles) and the
+   families followed: GEMM 11144 → 5917, FA 39919 → 32109. What remains of
+   the gap to 16 B/cycle is one cycle per row.
 2. **Column-vector VEC ops cost M cycles, not ⌈M/16⌉**: a consequence of
    the §11 column banking (a column vector lives in one bank), not of the
    VEC pipe. FA's per-KV-tile VEC chain is 4581 RTL cycles against 4156

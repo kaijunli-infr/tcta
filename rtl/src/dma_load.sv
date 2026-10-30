@@ -1,16 +1,23 @@
-// LOAD engine (LOAD.2D / LOAD.3D / LOAD.IDX, ISA §5.1-§5.2): one row at a time -- fetch the row's bytes
-// (DMA_BYTES per beat, any alignment, fixed-latency memory model), dequantise BANKS elements per cycle
-// (dequant_elem), round to BF16 for INP/WGT destinations, write one row slice per cycle into the scratchpad.
-// LOAD.IDX reads its indices from a VEC row tile (16 per scratchpad read), skips -1 rows with a zero fill and
-// raises IDX_RANGE / IDX_SHORT like the simulator. Rows are processed sequentially in v0 (no row overlap).
+// LOAD engine (LOAD.2D / LOAD.3D / LOAD.IDX, ISA §5.1-§5.2, §6.1): fetch the rows' bytes (DMA_BYTES per beat, any
+// alignment, fixed-latency memory model), dequantise BANKS elements per cycle (dequant_elem), round to BF16 for INP/WGT
+// destinations, write one row slice per cycle into the scratchpad. LOAD.IDX reads its indices from a VEC row tile
+// (16 per scratchpad read), skips -1 rows with a zero fill and raises IDX_RANGE / IDX_SHORT like the simulator.
 //
-// Row buffer (phase 8 K0.1): the engine fetches exactly the column window it writes (LOAD.IDX included: the
-// bytes of columns col0 .. col0+cols-1, not the whole row), so slice cg of the row starts at beat 4cg (f32 / i32),
-// 2cg (bf16), cg (f8) or cg/2 (f4: 8 bytes), and the buffer is RB_BANKS beat-wide LUT-RAM banks (beat b in bank
-// b % RB_BANKS) written one beat per cycle as the responses arrive and read as a 4-beat window per slice (each
-// bank at its own address, the outputs rotated into beat order). Block scales (*.b32 from the scale tensor,
-// f4.r16 from the row's scale bytes after its nibbles) are a second 2-beat fetch into `scalebuf`. The v0 buffer
-// (128 beat registers read as a 5-beat window at any beat offset) was 28 k LUTs.
+// Phase 8 K1: rows are pipelined. The engine is a fetch front and a write back end around a row-buffer ring:
+//   front  (S_ROW / S_FETCH): per row, resolve the index and the address, allocate a record (one of DMA_ROWS_IN_FLIGHT
+//          slots) and the row's beats in the ring, issue the beats one per cycle, go to the next row without waiting
+//   arrival: responses return in issue order; a data beat lands in the ring at the row's position, a scale beat
+//          (*.b32 / f4.r16: two per row, after its data) in the row's slot of `scmem`; `got_tot` counts them
+//   writer (W_WRITE): takes records in order once their beats are in (`got_tot` >= the record's end count), writes
+//          one slice per cycle through the dequant lanes (zero slices for -1 rows), then frees the ring space.
+// The ring is RB_BANKS beat-wide LUT-RAM banks (beat p in bank p % RB_BANKS) of ROWBUF_BEATS beats in all; a row takes
+// its natural number of beats at any offset, so 256-byte rows run eight deep, a 2048-byte row alone (as in v0). A slice
+// read is a 4-beat window at the row's offset, each bank at its own address, the outputs rotated into beat order.
+// A row costs max(beats, slices + 1) cycles in steady state instead of latency + beats + slices + 2 (v0, row-serial).
+//
+// LOAD.IDX on block-scaled rows (erratum E6, K1): f4.r16 rows carry their scales (fetched from the row after its
+// nibbles); f8.b32 / f4.b32 rows take their scale slice from the scale grid at row idx / 32. Scale codes index from the
+// row's column 0 (Appendix A), so any col0 works: code (col0 + c) / 32 for element c of the window.
 module dma_load
   import tcta_isa_pkg::*;
   import tcta_pkg::*;
@@ -50,9 +57,13 @@ module dma_load
   localparam int RB_DEPTH = ROWBUF_BEATS / RB_BANKS;
   localparam int RB_AW = $clog2(RB_DEPTH);
   localparam int RB_SH = $clog2(RB_BANKS);
-  typedef enum logic [3:0] {S_IDLE, S_DESC, S_SETUP, S_IDX_RD, S_IDX_WAIT, S_ROW, S_FETCH, S_WAIT, S_DEQ, S_ZFILL,
-                            S_META, S_DONE, S_FAULT} state_t;
-  state_t st;
+  localparam int POS_W = $clog2(ROWBUF_BEATS);            // ring position
+  localparam int NSLOT = DMA_ROWS_IN_FLIGHT;
+  localparam int SLOT_W = $clog2(NSLOT);
+  typedef enum logic [3:0] {S_IDLE, S_DESC, S_SETUP, S_IDX_RD, S_IDX_WAIT, S_ROW, S_FETCH, S_DRAIN, S_META, S_DONE, S_FAULT} state_t;
+  typedef enum logic {W_IDLE, W_WRITE} wstate_t;
+  state_t  st;
+  wstate_t wst;
 
   instr_t      cur;
   desc_t       d;
@@ -60,15 +71,37 @@ module dma_load
   logic [15:0] dst;
   logic [11:0] idx_slot;
   int          rows, cols, row0, col0, n_el_row, nb, n_beats, n_cg;
-  int          i, cg, beat_issue, beat_got, n_resp;
+  int          i, beat_issue, n_resp;
   logic        need_scales;        // *.b32 / f4.r16: a second fetch of this row's scale codes
   logic        is_r16, is_f4;
   logic [ADDR_W-1:0] row_addr, scale_addr;
-  logic [MEM_W-1:0] scalebuf [2];
   logic [31:0] idx_slice [BANKS];
   int          idx_cg;
-  logic signed [31:0] ri;
   logic        to_bf16;
+
+  // ---- row records (one per slot), the fetch FIFO (rows with beats, for the arrival side) and the counters ----
+  logic [POS_W-1:0] rec_start [NSLOT];
+  logic [7:0]       rec_nbeats [NSLOT];
+  logic [5:0]       rec_ncg [NSLOT];
+  logic [7:0]       rec_i [NSLOT];
+  logic             rec_zf [NSLOT];
+  logic [15:0]      rec_end [NSLOT];                      // got_tot value at which the row is complete
+  logic [SLOT_W-1:0] fq [NSLOT];
+  logic [SLOT_W:0]  alloc_cnt, wr_cnt, fq_wr, fq_rd;      // one bit wider than the index: full / empty
+  logic [POS_W:0]   alloc_pos, free_pos;                  // ring positions, one bit wider: occupancy
+  logic [15:0]      iss_tot, got_tot;
+  logic [7:0]       arr_cnt;                              // beats of the arriving row received so far
+  logic [SLOT_W-1:0] as, ws, fs;
+  logic             slot_free, ring_free, w_pending, w_ready, w_grant, zf_now, alloc_now;
+  int               wcg;
+  always_comb begin
+    as = alloc_cnt[SLOT_W-1:0]; ws = wr_cnt[SLOT_W-1:0]; fs = fq[fq_rd[SLOT_W-1:0]];
+    slot_free = (alloc_cnt - wr_cnt) < (SLOT_W+1)'(NSLOT);
+    ring_free = (ROWBUF_BEATS - int'((POS_W+1)'(alloc_pos - free_pos))) >= n_beats;   // the difference modulo 2^(POS_W+1): size it before the int cast
+    w_pending = (wr_cnt != alloc_cnt);
+    w_ready   = w_pending && ($signed(got_tot - rec_end[ws]) >= 0);
+    w_grant   = sp_grant && (st != S_IDX_RD);
+  end
 
   // ---- descriptor and geometry helpers ----
   always_comb desc_idx = cur.b[7:0];
@@ -77,27 +110,42 @@ module dma_load
     return (dtype == DT_F4_B32 || dtype == DT_F4_R16) ? (col >> 1) : col * el_bytes(dtype);
   endfunction
 
-  // ---- row buffer: RB_BANKS LUT-RAM banks of RB_DEPTH beats; beat b lives in bank b % RB_BANKS ----
+  // ---- row buffer ring: RB_BANKS LUT-RAM banks of RB_DEPTH beats; beat p lives in bank p % RB_BANKS ----
   logic [MEM_W-1:0] rb_rdata [RB_BANKS];
   logic [RB_AW-1:0] rb_raddr [RB_BANKS];
-  int   w0;                                  // first beat of slice cg's payload
-  logic rb_we;
+  int   w0;                                  // first beat of slice wcg's payload within the row
+  logic [POS_W-1:0] wpos;                    // its ring position
+  logic rb_we, arr_data;
+  logic [POS_W-1:0] arr_wpos;
   always_comb begin
     case (d.dtype)
-      DT_F32, DT_I32:     w0 = cg * 4;
-      DT_BF16:            w0 = cg * 2;
-      DT_F8_T, DT_F8_B32: w0 = cg;
-      default:            w0 = cg >> 1;
+      DT_F32, DT_I32:     w0 = wcg * 4;
+      DT_BF16:            w0 = wcg * 2;
+      DT_F8_T, DT_F8_B32: w0 = wcg;
+      default:            w0 = wcg >> 1;
     endcase
-    // bank k holds beat w0 + ((k - w0) mod RB_BANKS) of the window
-    for (int k = 0; k < RB_BANKS; k++) rb_raddr[k] = RB_AW'((w0 + ((k - w0) & (RB_BANKS - 1))) >> RB_SH);
-    rb_we = (st == S_FETCH || st == S_WAIT) && mem_rvalid && (beat_got < n_beats);
+    wpos = rec_start[ws] + POS_W'(w0);
+    // bank k holds beat wpos + ((k - wpos) mod RB_BANKS) of the window
+    for (int k = 0; k < RB_BANKS; k++) rb_raddr[k] = RB_AW'((int'(wpos) + ((k - int'(wpos)) & (RB_BANKS - 1))) >> RB_SH);
+    arr_data = mem_rvalid && (fq_rd != fq_wr) && (arr_cnt < rec_nbeats[fs]);
+    arr_wpos = rec_start[fs] + POS_W'(arr_cnt);
+    rb_we = arr_data;
   end
   for (genvar k = 0; k < RB_BANKS; k++) begin : g_rb
     (* ram_style = "distributed" *) logic [MEM_W-1:0] mem [RB_DEPTH];
-    always_ff @(posedge clk) if (rb_we && (beat_got & (RB_BANKS - 1)) == k) mem[RB_AW'(beat_got >> RB_SH)] <= mem_rdata;
+    always_ff @(posedge clk) if (rb_we && (int'(arr_wpos) & (RB_BANKS - 1)) == k) mem[RB_AW'(arr_wpos >> RB_SH)] <= mem_rdata;
     assign rb_rdata[k] = mem[rb_raddr[k]];
   end
+  // scale beats per slot (two per row)
+  (* ram_style = "distributed" *) logic [MEM_W-1:0] scmem0 [NSLOT];
+  (* ram_style = "distributed" *) logic [MEM_W-1:0] scmem1 [NSLOT];
+  logic [2*MEM_W-1:0] scw;
+  always_ff @(posedge clk) begin
+    if (mem_rvalid && (fq_rd != fq_wr) && !arr_data) begin
+      if (arr_cnt == rec_nbeats[fs]) scmem0[fs] <= mem_rdata; else scmem1[fs] <= mem_rdata;
+    end
+  end
+  assign scw = {scmem1[ws], scmem0[ws]};
 
   // ---- element extraction: the 4-beat window in beat order, then the dtype's element spacing ----
   logic [RB_BANKS*MEM_W-1:0] win;
@@ -108,8 +156,8 @@ module dma_load
   slice_t      wslice;
   int          nib0;                         // f4: nibble of element 0 of the slice within the window
   always_comb begin
-    for (int j = 0; j < RB_BANKS; j++) win[j*MEM_W +: MEM_W] = rb_rdata[(w0 + j) & (RB_BANKS - 1)];
-    nib0 = (cg & 1) * BANKS + (col0 & 1);
+    for (int j = 0; j < RB_BANKS; j++) win[j*MEM_W +: MEM_W] = rb_rdata[(int'(wpos) + j) & (RB_BANKS - 1)];
+    nib0 = (wcg & 1) * BANKS + (col0 & 1);
     for (int e = 0; e < BANKS; e++) begin
       int sc_i;
       case (d.dtype)
@@ -119,17 +167,17 @@ module dma_load
         default:            raw[e] = 32'(win[(nib0 + e)*4 +: 4]);
       endcase
       case (d.dtype)
-        DT_F8_B32, DT_F4_B32: sc_i = (cg * BANKS + e) >> 5;                 // scale codes start at col0 (col0 % 32 == 0)
-        DT_F4_R16:            sc_i = ((col0 & 15) + cg * BANKS + e) >> 4;   // scale bytes fetched from column col0 & ~15
+        DT_F8_B32, DT_F4_B32: sc_i = ((col0 & 31) + wcg * BANKS + e) >> 5;   // scale codes fetched from code col0 / 32
+        DT_F4_R16:            sc_i = ((col0 & 15) + wcg * BANKS + e) >> 4;   // scale bytes fetched from column col0 & ~15
         default:              sc_i = 0;
       endcase
-      sc8[e] = scalebuf[sc_i >> 4][(sc_i & 15)*8 +: 8];
+      sc8[e] = scw[sc_i*8 +: 8];
     end
   end
   for (genvar e = 0; e < BANKS; e++) begin : g_deq
     dequant_elem u_dq (.dtype(d.dtype), .raw(raw[e]), .scale8(sc8[e]), .scale_t(d.scale_t), .y(deq[e]));
     f32_to_bf16  u_bf (.x(deq[e]), .y(deq_bf[e]));
-    always_comb wslice[e] = to_bf16 ? {deq_bf[e], 16'd0} : deq[e];
+    always_comb wslice[e] = rec_zf[ws] ? 32'd0 : to_bf16 ? {deq_bf[e], 16'd0} : deq[e];
   end
 
   // ---- index conversion ----
@@ -141,10 +189,12 @@ module dma_load
   logic signed [31:0] row_mul_a;
   logic signed [63:0] row_mul;
   logic [ADDR_W-1:0]  row_base;                // this row's first byte (column 0)
+  logic [63:0]        grid_addr;               // *.b32: this row's scale codes from column col0 / 32 of scale row (row / 32)
   always_comb begin
     row_mul_a = is_idx ? idx_cur : 32'(row0 + i);
     row_mul = row_mul_a * $signed({1'b0, d.stride0});
     row_base = ADDR_W'(d.base + 64'(cur.base_off) + 64'(row_mul));
+    grid_addr = d.scales_base + 64'(cur.scales_off) + 64'($unsigned(row_mul_a) >> 5) * 64'(d.scales_stride) + 64'(col0 / 32);
   end
 
   // ---- outputs ----
@@ -153,39 +203,53 @@ module dma_load
     done = (st == S_DONE);
     mem_valid = 1'b0; mem_addr = '0;
     sp_req = '0; meta_we = 1'b0; meta_idx = '0; meta_wdata = '0;
-    case (st)
-      S_IDX_RD: sp_req = slice_req(SP_VEC, idx_slot, 0, i / BANKS, 1'b0, '0, '0);   // the slice holding index i (v0 used the stale idx_cg)
-      S_FETCH: begin
-        mem_valid = 1'b1;
-        if (beat_issue < n_beats) mem_addr = row_addr + ADDR_W'(beat_issue * DMA_BYTES);
-        else mem_addr = scale_addr + ADDR_W'((beat_issue - n_beats) * DMA_BYTES);
-      end
-      S_DEQ:   sp_req = slice_req(tref_sp(dst), tref_slot(dst), i, cg, 1'b1, slice_ben(cols, cg), wslice);
-      S_ZFILL: sp_req = slice_req(tref_sp(dst), tref_slot(dst), i, cg, 1'b1, slice_ben(cols, cg), '0);
-      S_META: begin
-        meta_we = 1'b1; meta_idx = 8'(slot_index(tref_sp(dst), tref_slot(dst)));
-        meta_wdata = '{rows: 10'(rows), cols: 10'(cols), pready: 1'b0};
-      end
-      default: ;
-    endcase
+    if (st == S_IDX_RD) sp_req = slice_req(SP_VEC, idx_slot, 0, i / BANKS, 1'b0, '0, '0);   // the slice holding index i
+    else if (wst == W_WRITE) sp_req = slice_req(tref_sp(dst), tref_slot(dst), int'(rec_i[ws]), wcg, 1'b1, slice_ben(cols, wcg), wslice);
+    if (st == S_FETCH) begin
+      mem_valid = 1'b1;
+      if (beat_issue < n_beats) mem_addr = row_addr + ADDR_W'(beat_issue * DMA_BYTES);
+      else mem_addr = scale_addr + ADDR_W'((beat_issue - n_beats) * DMA_BYTES);
+    end
+    if (st == S_META) begin
+      meta_we = 1'b1; meta_idx = 8'(slot_index(tref_sp(dst), tref_slot(dst)));
+      meta_wdata = '{rows: 10'(rows), cols: 10'(cols), pready: 1'b0};
+    end
   end
 
   task automatic set_fault(input fault_t code);
     fault <= 1'b1; fault_code <= code; st <= S_FAULT;
   endtask
 
+  // ---- allocation: a row record (and, unless the row is skipped, its beats in the ring) ----
+  always_comb begin
+    zf_now = is_idx && (idx_cur == -1);
+    alloc_now = (st == S_ROW) && (i < rows) && (n_cg != 0) && !(is_idx && idx_cg != (i / BANKS)) && slot_free &&
+                (zf_now || (ring_free && !(is_idx && (idx_cur < 0 || idx_cur >= $signed(d.shape0)))));
+  end
+  // records: no reset, always written before they are read
+  always_ff @(posedge clk) begin
+    if (alloc_now) begin
+      rec_start[as] <= alloc_pos[POS_W-1:0]; rec_nbeats[as] <= zf_now ? 8'd0 : 8'(n_beats); rec_ncg[as] <= 6'(n_cg);
+      rec_i[as] <= 8'(i); rec_zf[as] <= zf_now; rec_end[as] <= iss_tot + (zf_now ? 16'd0 : 16'(n_beats + (need_scales ? 2 : 0)));
+      if (!zf_now) fq[fq_wr[SLOT_W-1:0]] <= as;
+    end
+  end
+
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      st <= S_IDLE; fault <= 1'b0; fault_code <= F_NONE; cur <= '0; d <= '0; is_idx <= 0; dst <= '0; idx_slot <= '0;
+      st <= S_IDLE; wst <= W_IDLE; fault <= 1'b0; fault_code <= F_NONE; cur <= '0; d <= '0; is_idx <= 0; dst <= '0; idx_slot <= '0;
       rows <= 0; cols <= 0; row0 <= 0; col0 <= 0; n_el_row <= 0; nb <= 0; n_beats <= 0; n_cg <= 0;
-      i <= 0; cg <= 0; beat_issue <= 0; beat_got <= 0; n_resp <= 0; need_scales <= 0; is_r16 <= 0; is_f4 <= 0;
-      row_addr <= '0; scale_addr <= '0; idx_cg <= 0; ri <= 0; to_bf16 <= 0;
+      i <= 0; wcg <= 0; beat_issue <= 0; n_resp <= 0; need_scales <= 0; is_r16 <= 0; is_f4 <= 0;
+      row_addr <= '0; scale_addr <= '0; idx_cg <= 0; to_bf16 <= 0;
+      alloc_cnt <= '0; wr_cnt <= '0; fq_wr <= '0; fq_rd <= '0; alloc_pos <= '0; free_pos <= '0; iss_tot <= '0; got_tot <= '0; arr_cnt <= '0;
       for (int k = 0; k < BANKS; k++) idx_slice[k] <= '0;
-      scalebuf[0] <= '0; scalebuf[1] <= '0;
     end else begin
+      // ---- front ----
       case (st)
         S_IDLE: if (issue) begin
           cur <= ins; fault <= 1'b0; fault_code <= F_NONE; st <= S_DESC;
+          alloc_cnt <= '0; wr_cnt <= '0; fq_wr <= '0; fq_rd <= '0; alloc_pos <= '0; free_pos <= '0; iss_tot <= '0; got_tot <= '0; arr_cnt <= '0;
+          wst <= W_IDLE;
         end
         S_DESC: st <= S_SETUP;                       // desc_data valid now (registered read of desc_idx = cur.b[7:0])
         S_SETUP: begin
@@ -199,7 +263,7 @@ module dma_load
             is_r16 <= (dd.dtype == DT_F4_R16);
             is_f4 <= (dd.dtype == DT_F4_B32 || dd.dtype == DT_F4_R16);
             need_scales <= (dd.dtype == DT_F8_B32 || dd.dtype == DT_F4_B32 || dd.dtype == DT_F4_R16);
-            i <= 0; cg <= 0; idx_cg <= -1;
+            i <= 0; idx_cg <= -1;
             ncols = int'(cur.imm[15:0]); cols <= ncols; n_cg <= n_slices(ncols); col0 <= int'(cur.d);
             // f4: an odd col0 puts element 0 in the high nibble of the first byte, so the window is one byte longer
             dbytes = (dd.dtype == DT_F4_B32 || dd.dtype == DT_F4_R16) ? ((ncols + int'(cur.d[0]) + 1) >> 1) : ncols * el_bytes(dd.dtype);
@@ -212,7 +276,7 @@ module dma_load
               else if (rb % 64 != 0 || rb > ROWBUF_BYTES) set_fault(F_BAD_SHAPE);
               else if (tref_sp(cur.c) != SP_VEC || int'(tref_slot(cur.c)) < VEC_ROW_SLOT0) set_fault(F_BAD_SHAPE);
               else if (int'(meta[slot_index(SP_VEC, tref_slot(cur.c))].cols) < int'(cur.b[15:8])) set_fault(F_IDX_SHORT);
-              else if (dd.dtype == DT_F8_B32 || dd.dtype == DT_F4_B32) set_fault(F_BAD_QUALIFIER);
+              else if (dd.dtype > DT_F4_R16) set_fault(F_BAD_QUALIFIER);
               else if (ncols > sp_cols(tref_sp(dstr), tref_slot(dstr))) set_fault(F_BAD_SHAPE);
               else st <= S_ROW;
             end else begin
@@ -226,25 +290,26 @@ module dma_load
             end
           end
         end
-        // ---- per row ----
+        // ---- per row: resolve, allocate, fetch ----
         S_ROW: begin
-          if (i >= rows) st <= S_META;
+          if (i >= rows) st <= S_DRAIN;
           else if (n_cg == 0) i <= i + 1;
           else if (is_idx && idx_cg != (i / BANKS)) st <= S_IDX_RD;
-          else begin
-            logic signed [31:0] r;
-            r = is_idx ? idx_cur : 32'sd0;
-            ri <= r;
-            if (is_idx && r == -1) begin cg <= 0; st <= S_ZFILL; end
-            else if (is_idx && (r < 0 || r >= $signed(d.shape0))) set_fault(F_IDX_RANGE);
-            else begin
+          else if (is_idx && idx_cur != -1 && (idx_cur < 0 || idx_cur >= $signed(d.shape0))) set_fault(F_IDX_RANGE);
+          else if (alloc_now) begin
+            alloc_cnt <= alloc_cnt + 1'b1; i <= i + 1;
+            if (!zf_now) begin                         // a skipped row is a record with no beats, written as zeros in its turn
+              fq_wr <= fq_wr + 1'b1;
+              alloc_pos <= alloc_pos + (POS_W+1)'(n_beats);
+              iss_tot <= iss_tot + 16'(n_beats + (need_scales ? 2 : 0));
               row_addr <= row_base + ADDR_W'(col_bytes(d.dtype, col0));
               if (is_r16) scale_addr <= row_base + ADDR_W'((n_el_row >> 1) + (col0 >> 4));
-              else scale_addr <= ADDR_W'(d.scales_base + 64'(cur.scales_off) + 64'((row0 + i) / 32) * 64'(d.scales_stride) + 64'(col0 / 32));
-              beat_issue <= 0; beat_got <= 0; n_resp <= n_beats + (need_scales ? 2 : 0);
+              else scale_addr <= ADDR_W'(grid_addr);
+              beat_issue <= 0; n_resp <= n_beats + (need_scales ? 2 : 0);
               st <= S_FETCH;
             end
           end
+          // else: no free slot or ring space yet; retry next cycle
         end
         S_IDX_RD: if (sp_grant) begin idx_cg <= i / BANKS; st <= S_IDX_WAIT; end
         S_IDX_WAIT: if (sp_rvalid) begin
@@ -252,34 +317,34 @@ module dma_load
           st <= S_ROW;
         end
         S_FETCH: begin
-          if (beat_issue + 1 >= n_resp) st <= S_WAIT;
+          if (beat_issue + 1 >= n_resp) st <= S_ROW;
           beat_issue <= beat_issue + 1;
-          if (mem_rvalid) begin                        // data beats land in the row buffer banks (rb_we)
-            if (mem_rerr) set_fault(F_PAGE_FAULT);
-            if (beat_got >= n_beats) scalebuf[beat_got - n_beats] <= mem_rdata;
-            beat_got <= beat_got + 1;
-          end
         end
-        S_WAIT: begin
-          if (mem_rvalid) begin
-            if (mem_rerr) set_fault(F_PAGE_FAULT);
-            if (beat_got >= n_beats) scalebuf[beat_got - n_beats] <= mem_rdata;
-            beat_got <= beat_got + 1;
-            if (beat_got + 1 >= n_resp) begin cg <= 0; st <= S_DEQ; end
-          end
-        end
-        S_DEQ: if (sp_grant) begin
-          if (cg + 1 >= n_cg) begin i <= i + 1; st <= S_ROW; end
-          cg <= cg + 1;
-        end
-        S_ZFILL: if (sp_grant) begin
-          if (cg + 1 >= n_cg) begin i <= i + 1; st <= S_ROW; end
-          cg <= cg + 1;
-        end
+        S_DRAIN: if (!w_pending && wst == W_IDLE) st <= S_META;
         S_META: if (meta_ack) st <= S_DONE;
         S_DONE: st <= S_IDLE;
         S_FAULT: ;                                   // sticky: the core halts
         default: st <= S_IDLE;
+      endcase
+
+      // ---- arrival (responses in issue order; the data beats land in the ring, see rb_we) ----
+      if (mem_rvalid && (fq_rd != fq_wr)) begin
+        if (mem_rerr) set_fault(F_PAGE_FAULT);
+        got_tot <= got_tot + 1'b1;
+        if (int'(arr_cnt) + 1 >= int'(rec_nbeats[fs]) + (need_scales ? 2 : 0)) begin fq_rd <= fq_rd + 1'b1; arr_cnt <= '0; end
+        else arr_cnt <= arr_cnt + 1'b1;
+      end
+
+      // ---- writer ----
+      case (wst)
+        W_IDLE: if (w_ready && st != S_IDLE && st != S_FAULT) begin wcg <= 0; wst <= W_WRITE; end
+        W_WRITE: if (w_grant) begin
+          if (wcg + 1 >= int'(rec_ncg[ws])) begin
+            wst <= W_IDLE; wr_cnt <= wr_cnt + 1'b1; free_pos <= free_pos + (POS_W+1)'(rec_nbeats[ws]);
+          end
+          wcg <= wcg + 1;
+        end
+        default: wst <= W_IDLE;
       endcase
     end
   end

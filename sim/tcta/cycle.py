@@ -313,12 +313,13 @@ class CycleMachine(Machine):
             idx = its.data[0, :n]
             live = int((idx != -1).sum())
             inf.update(rows=live, nrows=n, cols=a["cols_valid"], row_bytes=a["row_bytes"], bytes=live * a["row_bytes"],
-                       dtype=a["region"].dtype, gather=True)
+                       dtype=a["region"].dtype, gather=True, col0=a.get("col0", 0))
         elif op == "STORE.2D":
             r = a["region"]
             el = {"f32": 4, "i32": 4, "bf16": 2}.get(r.dtype, 1)
             rows, cols = a["rows_valid"], a["cols_valid"]
-            inf.update(rows=rows, cols=cols, bytes=rows * cols * el, dtype=r.dtype, requests=1)
+            nb = dt.pad64(cols // 2 + cols // 16) if r.dtype == "f4.r16" else cols * el      # Appendix A: a 64 B-padded row
+            inf.update(rows=rows, cols=cols, bytes=rows * nb, dtype=r.dtype, requests=1)
         elif op == "STORE.IDX":
             its = self.sp[a["idx"]]
             r = a["region"]
@@ -431,27 +432,55 @@ def _slices(n: int, lanes: int) -> int:
 
 
 def _rtl_dma_cycles(T: DeviceTiming, q: Q, inf: dict) -> int:
-    """Row-serial DMA engine: per row the memory latency, the row's beats, one scratchpad slice per 16 columns and
-    the row-step overhead (LOAD); slice reads, beats and overhead (STORE); setup / metadata per instruction. A
-    gather adds the index-slice read per 16 rows (2 cycles) and one cycle per skipped (-1) row."""
+    """Row-pipelined DMA engines (phase 8 K1): two stages per instruction, a front (LOAD: issue the row's beats; STORE:
+    read and convert its slices) and a back end (LOAD: write the slices; STORE: write the beats), overlapped across
+    rows through the row-buffer ring. An instruction costs the setup, the memory latency (LOAD), the longer stage over
+    all rows, the shorter stage's per-row cost once (the pipeline's fill) and a fixed tail. Small rows are bound by the
+    records in flight (a row holds its record from allocation to its last write). A gather's front reads the index
+    slice every 16 rows (dma_idx_slice_cycles) and spends one cycle per skipped (-1) row; its back end starts after
+    the first index slice. A LOAD fetches the column window it writes (not row_bytes) plus two scale beats for the
+    block-scaled formats. An f4.r16 store quantises a slice in dma_store_r16_slice_cycles and ends each row with its
+    scale chunks (one per 8 slices), the open beat and the zero padding to 64 B."""
     rows, cols = inf.get("rows", 0), inf.get("cols", 0)
     bpc = T.bytes_per_cycle_per_channel
     ncg = _slices(cols, T.vec_lanes)
-    if inf.get("gather"):
+    gather = bool(inf.get("gather"))
+    dtype = inf.get("dtype", "")
+    n = inf.get("nrows", rows)
+    idx = T.dma_idx_slice_cycles if gather else 0
+    front_extra = (idx * _slices(n, T.vec_lanes) + (n - rows)) if gather else 0
+    if q == Q.LOAD:
+        if dtype in ("f4.b32", "f4.r16"):
+            data_bytes = (cols + (inf.get("col0", 0) & 1) + 1) // 2        # an odd col0 starts at a high nibble: one byte more
+        else:
+            data_bytes = cols * {"bf16": 2, "f32": 4, "i32": 4}.get(dtype, 1)
+        beats = -(-data_bytes // bpc) + (2 if dtype in ("f4.b32", "f8.b32", "f4.r16") else 0)
+        fetch = beats + T.dma_load_row_overhead
+        write = ncg + 1
+        hold = T.dram_latency_cycles + fetch + write
+        per_front = max(fetch, -(-hold // T.dma_rows_in_flight))
+        front = rows * per_front + front_extra
+        back = rows * write + idx
+        return T.dma_load_setup_cycles + T.dram_latency_cycles + max(front, back) + min(fetch, write) + T.dma_tail_cycles
+    if dtype == "f4.r16":
+        row_bytes = dt.pad64(cols // 2 + cols // 16)
+    elif gather:
         row_bytes = inf.get("row_bytes", 0)
     else:
         row_bytes = inf.get("bytes", 0) // rows if rows else 0
     beats = -(-row_bytes // bpc)
-    if q == Q.LOAD:
-        per_row = T.dram_latency_cycles + beats + ncg + T.dma_load_row_overhead
-        total = T.dma_load_setup_cycles + rows * per_row
+    if dtype == "f4.r16":
+        data_beats = -(-(cols // 2 + ncg) // bpc)
+        read = ncg * T.dma_store_r16_slice_cycles + _slices(ncg, 8) + 1 + (beats - data_beats) + 2
     else:
-        per_row = T.dma_store_slice_cycles * ncg + beats + T.dma_store_row_overhead
-        total = T.dma_store_setup_cycles + rows * per_row
-    if inf.get("gather"):
-        n = inf.get("nrows", rows)
-        total += 2 * _slices(n, T.vec_lanes) + (n - rows)
-    return total
+        read = ncg + 1
+    write = beats + T.dma_store_row_overhead
+    hold = read + write
+    per_front = max(read, -(-hold // T.dma_rows_in_flight))
+    front = rows * per_front + front_extra
+    back = rows * write + idx
+    tail = T.dma_tail_cycles - (1 if dtype == "f4.r16" else 0)      # measured: the r16 row end's padding beats overlap the writer's bubble
+    return T.dma_store_setup_cycles + max(front, back) + min(read, write) + tail
 
 
 def _rtl_vec_cycles(T: DeviceTiming, op: str, M: int, N: int, args: dict) -> int:

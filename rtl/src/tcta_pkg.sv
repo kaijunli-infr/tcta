@@ -159,6 +159,7 @@ package tcta_pkg;
   localparam int MEM_W = DMA_BYTES * 8;
   localparam int ROWBUF_BYTES = 2048;      // the longest DRAM row a LOAD/STORE handles in one piece
   localparam int ROWBUF_BEATS = ROWBUF_BYTES / DMA_BYTES;
+  localparam int DMA_ROWS_IN_FLIGHT = 8;   // LOAD / STORE row records in flight (phase 8 K1); the row-buffer ring holds ROWBUF_BEATS beats
 
   // ---- descriptor fields (ISA §12, 48 bytes little-endian) ----
   typedef struct packed {

@@ -76,14 +76,21 @@ class DeviceTiming:
     #      and the constants below are the values measured on the Verilator trace (never tuned). KV260 carries
     #      them; KV260_PLAN and CONFIG_C keep the planning rules ----
     rtl_rules: bool = False
-    #   DMA: a LOAD.2D row costs dram_latency + ceil(row_bytes / bytes_per_cycle) beats + one slice write per 16
-    #   columns + dma_load_row_overhead; a STORE.2D row dma_store_slice_cycles per slice + beats + overhead; per
-    #   instruction the setup/metadata cycles. The next row's fetch does not overlap the current row.
+    #   DMA (phase 8 K1, rows pipelined through a row-buffer ring, dma_rows_in_flight records): a LOAD is a fetch
+    #   stage of beats + dma_load_row_overhead cycles per row and a write stage of one slice per 16 columns + 1 per
+    #   row, overlapped; the instruction costs setup + latency + rows * max(fetch, write) + min(fetch, write) + tail.
+    #   A STORE is a read stage of one slice per 16 columns + 1 per row (f4.r16: dma_store_r16_slice_cycles per
+    #   slice + the row's scale chunks + padding beats) and a write stage of beats + dma_store_row_overhead per row.
+    #   Small rows are bound by the records in flight: a row holds its record for latency + fetch + write cycles.
+    #   (K0: row-serial, latency + beats + slices + 2 per LOAD row, 2 * slices + beats + 1 per STORE row.)
     dma_load_setup_cycles: int = 5
     dma_store_setup_cycles: int = 4
-    dma_load_row_overhead: int = 2
+    dma_load_row_overhead: int = 1
     dma_store_row_overhead: int = 1
-    dma_store_slice_cycles: int = 2
+    dma_tail_cycles: int = 1
+    dma_rows_in_flight: int = 8
+    dma_store_r16_slice_cycles: int = 9
+    dma_idx_slice_cycles: int = 3           # LOAD.IDX / STORE.IDX: the index-slice read every 16 rows (front stage)
     #   VEC: one [row, 16-column] slice per operand read per cycle (a column vector of M elements costs M cycles), a
     #   row-vector operand one read per row, SFU ops sfu_slice_cycles per slice (VEXP2.SUM one more per slice and
     #   one row write), plus vec_op_overhead_cycles per instruction
@@ -167,7 +174,8 @@ KV260 = DeviceTiming(
     name="v1-kv260",
     rtl_rules=True,
     dram_latency_cycles=24,
-    dma_load_setup_cycles=5, dma_store_setup_cycles=4, dma_load_row_overhead=2, dma_store_row_overhead=1, dma_store_slice_cycles=2,
+    dma_load_setup_cycles=5, dma_store_setup_cycles=4, dma_load_row_overhead=1, dma_store_row_overhead=1, dma_tail_cycles=1,
+    dma_rows_in_flight=8, dma_store_r16_slice_cycles=9, dma_idx_slice_cycles=3,
     vec_op_overhead_cycles=6, sfu_slice_cycles=6, sfu_sum_slice_extra=1, sfu_sum_row_extra=1, vec_reduce_extra=4, sfu_fused_sub_sum=True,
     mma_setup_cycles=2, mma_fill_ready_latency=2, mma_release_latency=20, mma_result_latency=21,
     mma_cv_row_cycles=2, mma_wb_row_cycles=2, mma_wb_acc_extra=3, mma_wb_mask_extra=4, mma_wb_mask_mul_extra=4, mma_rf_rows=32,
