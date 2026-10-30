@@ -1,4 +1,4 @@
-# Handoff: TileLang cut-off task, phases 1–7 and phase 8 K0, L1–L5, K1–K2 (2026-10-29)
+# Handoff: TileLang cut-off task, phases 1–7 and phase 8 K0, L1–L5, K1–K3 (2026-10-30)
 
 For the session steering `docs/tilelang-lowering-cutoff-task.md`, its
 addendum, `docs/tilelang-phase2-moe-task.md`, `docs/tilelang-phase3-task.md`,
@@ -7,8 +7,8 @@ addendum, `docs/tilelang-phase2-moe-task.md`, `docs/tilelang-phase3-task.md`,
 `docs/phase8-amendment-fit.md` (K0: fit) and `docs/phase8-gate2-task.md`
 (the full phase-8 text: L1–L4, K1–K8). All deliverables of phases 1–7,
 phase 8 K0.1–K0.4, L1–L3 and K1 exist (L4 analysed and not taken); the
-whole repo is green (`pytest tests -q`: **95 passed**; `make -C rtl/test
-all`: **10/10 PASS**, also with `FORMAL=1`, lint clean). The ISA is the main
+whole repo is green (`pytest tests -q`: **96 passed**; `make -C rtl/test
+all`: **12/12 PASS**, also with `FORMAL=1`, lint clean). The ISA is the main
 session's full file with errata E1–E7 (§16; E1 and E5 were assigned here,
 E2–E4, E6 and E7 by the main session; E7 makes the scratchpad access table
 normative hardware). **This repo is canonical**; since 2026-10-29 the main
@@ -46,10 +46,30 @@ for FA +72 % / GEMM +101 %; not a middle ground, the §0.3 lane rule stands
 the VEC pad's 2-D slots banked by row: `[64, 1]` ops 70–134 → 9–14 cycles,
 FA 32109 → 26049 (−18.9 %); row access to `[M, N > 1]` 2-D VEC tiles is
 element-serial (one finding for the main session); core 167.7 k LUT-eq
-(143 %, +5.2 k). Next: K3–K8 of `docs/phase8-gate2-task.md` (K3 per the
-L1–L4 verdict's finding 4: pipeline whole rows); the Vivado run (x86)
-decides the lane width and can report both arrays (`vivado_ooc.tcl` with
-`TCTA_MAC8`).
+(143 %, +5.2 k). **Phase 8 K3 done** — the SFU's slices pipelined (4 cycles
+per slice, was 6) and the MMA writeback pipelined through its port (an
+accumulated row 2 cycles, was 5): FA 26049 → 21593 (−17.1 %), its PV
+accumulate 1436 → 1150 and no longer writeback-bound; two harness programs
+added (`mma_mask`, `sfu`); core 168.5 k LUT-eq (144 %, +0.8 k). Next: K4–K8
+of `docs/phase8-gate2-task.md`; the Vivado run (x86) decides the lane width
+and can report both arrays (`vivado_ooc.tcl` with `TCTA_MAC8`).
+
+## Phase 8 K3 in one paragraph
+
+The VEC unit issues the next SFU slice's read two lane steps before the
+stepping slice ends, so it returns in the last step and the four SFU lanes
+never idle: every SFU kind costs 4 cycles per slice (VEXP2.SUM 64×64 1874 →
+1052, `[64, 1]` VEXP2 29 → 23; VGATE decay 6, two operand reads); the
+sigmoid chain's lane use is gated on the kind and VEXP2.SUM's partial add
+keeps its own tag. The MMA writeback prefetches the next row's first operand
+(old accumulator, else mask) while the current row adds and takes the next
+row in the write cycle, every read landing in one register: streaming rows
+cost 2 cycles plain and accumulate, 3 masked, 6 masked accumulate, so FA's
+PV accumulate is the plain product plus 2 (1150 vs 1148; 1436 before). Two
+programs join the harness — `mma_mask` (bit-exact) and `sfu` (every SFU kind,
+a row-relative 2⁻¹⁰ check) — and the cycle model replays the writeback FSM
+state by state and carries the SFU constants; every MMA and SFU row is exact,
+also on the 8×8 build.
 
 ## Phase 8 K2 in one paragraph
 
@@ -179,16 +199,18 @@ needs an x86 machine (`rtl/synth/vivado_ooc.tcl`).
 | L3 | `rtl/src/mma_unit.sv` (`W_ADD`, `ADD_LANES`); `sim/tcta/timing.py` (`mma_cv_row_cycles`, wb extras), `cycle.py`, `tests/test_cycle.py` | done (a8244a2): `mma_unit` 51.8 k → 46.0 k; FA +1.4 % |
 | L4 | `docs/phase8-k0-fit-report.md` §4b | not taken: 64 RAMB18 for ≈ −3 k; block RAM is the tighter resource |
 | L5 | `tcta_pkg.sv` (`TCTA_MAC8`), `mma_unit.sv`, `mma_opbuf.sv`; `make all MAC8=1`; `yosys_ooc.py --define/--md`; `rtl/synth/yosys_xck26_estimate_mac8.md`; `timing.KV260_L5`; `calibrate.py --timing=` | measured, not taken: −17 445 LUT-eq (est. −35 k), MMA 3–4×, FA +72 % |
+| K3 | `rtl/src/vec_unit.sv` (`sfu_can_take`, `sfu_load`, `sum_tag`), `mma_unit.sv` (`pf_d`, `pf_out`, `pf_v`, `take_next`, the prefetch states); `rtl/test/gen_vectors.py` (`mma_mask`, `sfu`), `compare.py` (`f32tol`); `sim/tcta/timing.py` (`sfu_fill_cycles`, `sfu_vec_read_cycles`; `mma_wb_*` dropped), `cycle.py` (writeback FSM replay, SFU rules), `tests/test_cycle.py` | done: FA −17.1 %, SFU 4 per slice, accumulate rows 2; `vec_unit` 56.1 k → 55.9 k, `mma_unit` 53.2 k → 54.1 k |
 | K2 | `rtl/src/tcta_pkg.sv` (`col_req`, `vec_col_addr`, `req.cs`), `scratchpad.sv` (serial path), `vec_unit.sv` (`cs_mode`, `rowvec_q`), `dma_store.sv` (read lane masks); `rtl/formal/bank_arbiter_vec.sby`; `sim/tcta/cycle.py` (`_vec2d`, VEC / DMA rules) | done: FA −18.9 %, `[64, 1]` ops 9–14 cycles; VEC pad 5.0 k → 8.0 k, `vec_unit` 53.9 k → 56.1 k |
 | K1 | `rtl/src/dma_load.sv`, `dma_store.sv`, `tcta_pkg.sv` (`DMA_ROWS_IN_FLIGHT`); `sim/tcta/machine.py` (`LOAD.IDX` b32, `_row_source` phase), `dtypes.py` (`col_phase`), `cycle.py::_rtl_dma_cycles`, `timing.py`; `gen_vectors.py` gather; `isa/isa-v0.1.md` E7 | done: 14.5 B/cycle (≥ 14), FA −19.6 %, GEMM −46.9 %; `dma_store` 7.4 k → 11.4 k (f4.r16) |
 
 ## Key numbers (v1 KV260 core, RTL cycles, 24-cycle harness memory latency)
 
-- GEMM 5917 (planning model 5633, calibrated 5914); FA 26049 (27856;
-  26049); dma_copy 8396 (a `[64, 64]` tile through a 2-D VEC slot, E2
-  element-serial), mma 23230, vec 14610, loop 1031 (model 955: pad
-  contention), gather 23089, all within 0.1 % after calibration except loop
-  (after K1: FA 32109, vec 14910, dma_copy 2228, loop 489, gather 22683;
+- GEMM 5917 (planning model 5633, calibrated 5914); FA 21593 (27856;
+  21584); dma_copy 8396 (a `[64, 64]` tile through a 2-D VEC slot, E2
+  element-serial), mma 23138, mma_mask 16281, vec 14610, sfu 18898, loop 1031
+  (model 955: pad contention), gather 23089, all within 0.2 % after
+  calibration except loop (after K2: FA 26049, mma 23230; after K1: FA
+  32109, vec 14910, dma_copy 2228, loop 489, gather 22683;
   after L3: GEMM 11144, FA 39919, mma 30512, vec 22317; K0: FA 39371; phase
   7: GEMM 11291, FA 38543).
 - LOAD.2D: 5 + 24 + rows · max(beats + 1, slices + 1) + fill + 1 (64×128
@@ -196,9 +218,15 @@ needs an x86 machine (`rtl/synth/vivado_ooc.tcl`).
   max(slices + 1, beats + 1) + fill + 1 (64×128 f32 → 2126; K0 3140);
   STORE.2D f4.r16 9 cycles per slice (64×128 → 5069); LOAD.IDX bf16 128
   rows 2239, f4.r16 1195, f4.b32 827.
-- MMA 64×128×128: 4284 (accumulate 4332) = first fill 131 + 32 blocks × 128
-  + drain 57 (105); GEMM's MMA 2571 (P = 100); FA QKᵀ 1148, PV accumulate
-  1436 (writeback-bound at P = 64: 5 cycles per row after L3).
+- MMA 64×128×128: 4284 (accumulate 4286; L3: 4332) = first fill 131 + 32
+  blocks × 128 + drain 57 (59); MMA.MASKED 4302, mask-mul accumulate 4350;
+  GEMM's MMA 2571 (P = 100); FA QKᵀ 1148, PV accumulate 1150 (K3: rows
+  pipelined through the writeback port, 2 cycles per accumulated row; L3:
+  1436, writeback-bound at P = 64).
+- VEC (K3): SFU 4 cycles per slice (VEXP2 / VRCP 64×128 2055, VLOG2 /
+  VSIGMOID 64×64 1031, VEXP2 64×64 with a vector 1039, VEXP2.SUM 64×64 1052
+  / 64×128 2076, `[64, 1]` VEXP2 23 / with a vector 31; VGATE decay 64×64
+  1543 — two reads per slice).
 - VEC (K2): `[64, 1]` op 9–14 (VFILL 9, imm 10, with a vector 14, SFU 29;
   K1: 70–134); with a column-vector operand `[64, 128]` 522 (K1: 582);
   VEXP2.SUM 64×64 1874 (K1: 1994); row access to a `[M, N > 1]` 2-D VEC
@@ -208,6 +236,7 @@ needs an x86 machine (`rtl/synth/vivado_ooc.tcl`).
   1994 (plan 3072); row reductions +4 (shared reducer).
 - Front end: 3 cycles per word (PUSH/POP too), extension word 2 + 1 per
   entry (+1 per `_mod`), LOOP/ENDLOOP 2, LOOP r 1 + ⌈R/step⌉ after VCOUNT.
+- Synthesis after K3: core 158 578 LUT + 1 235 RAM32M16 = 168 458 LUT-eq (144 % of the K26) / 43 199 FF / 622 DSP; `mma_unit` 53 199 → 54 124 (the writeback's landing register and muxes), `vec_unit` 56 102 → 55 936.
 - Synthesis after K2: core 157 819 LUT + 1 235 RAM32M16 = 167 699 LUT-eq (143 % of the K26) / 42 639 FF / 622 DSP; `scratchpad_VEC` 5 019 → 8 021 (the serial path), `vec_unit` 53 901 → 56 102.
 - Synthesis with the 8×8 array (`TCTA_MAC8`, L5): core 145 051 LUT-eq (124 %), `mma_unit` 35 754 (153 DSP); MMA 64×128×128 16 547 cycles, GEMM 11 875, FA 55 269.
 - Synthesis (Yosys, cells only, after K1): core 152 624 LUT + 1 234

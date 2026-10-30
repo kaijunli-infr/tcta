@@ -71,7 +71,7 @@ module mma_unit
                                                 // cost FA's 64x64x64 products +15.6 % (measured 1148 -> 1327)
   localparam int MUL_LANES = 8;                 // mask multipliers: a row in BANKS / MUL_LANES cycles
   localparam int CV_HALVES = C / CV_LANES;      // converter passes per result row (1 with the 8 x 8 array)
-  localparam bit WB_ONE = (C <= BANKS / 2);     // the result row fits one adder half: one mask pass, old + result in W_WRITE
+  localparam bit WB_ONE = (C <= BANKS / 2);     // the result row fits one adder half: one mask pass, one add pass
   localparam int RFW = 3 + FIX_ACC_W;           // a result FIFO lane entry: {flags, acc}
 
   // ---------------------------------------------------------------- instruction decode
@@ -331,14 +331,25 @@ module mma_unit
   typedef enum logic [3:0] {W_IDLE, W_MASK, W_MASK_WAIT, W_MCALC, W_MCALC2, W_OLD, W_OLD_WAIT, W_ADD, W_WRITE} wstate_t;
   // Phase 8 L3: ADD_LANES adders and MUL_LANES multipliers work on a row in two lane halves: the mask op in W_MCALC /
   // W_MCALC2, the old-accumulator add in W_ADD (lanes 0 .. 7, registered in s_outq) and W_WRITE (lanes 8 .. 15, straight
-  // into the write data). One cycle more per accumulated or mask-added row than the 16-adder version.
+  // into the write data).
+  // Phase 8 K3: rows are pipelined through the port. A row's first operand read (the old accumulator when accumulating,
+  // else the mask) is prefetched for the row still at the converter output while the current row adds (W_MCALC, W_MCALC2,
+  // W_ADD: the port is free and no read is outstanding), and the write cycle takes the next row, so an accumulated row
+  // streams at two cycles (read old n+1 ‖ add n, write n) instead of five (W_OLD, W_OLD_WAIT, W_ADD, W_WRITE from idle),
+  // a mask-added row at three. Every read lands in pf_d; a row's old value is copied to old_d for the second add half
+  // (in W_ADD) or before the mask read overwrites pf_d (in W_MASK), its mask to mask_d for the second mask half (in
+  // W_MCALC). From idle the first read is issued in the take cycle. Order per row: old, mask, mask op, add, write.
   localparam int ADD_LANES = BANKS / 2;
+  if (MUL_LANES != ADD_LANES) begin : g_wb_check
+    $error("mma_unit: the writeback's mask multipliers and adders share the half select (MUL_LANES == ADD_LANES)");
+  end
   wstate_t wst;
   rrow_t   wrow;
-  slice_t  s_masked, s_out, mask_d, old_d;
+  slice_t  s_masked, s_out, mask_d, old_d, pf_d;
+  logic    pf_out, pf_v;                        // a prefetch read is outstanding / pf_d holds the converter-output row's operand
   logic [31:0] s_outq [ADD_LANES];
   int      popped;
-  logic [31:0] add_a [ADD_LANES], add_b [ADD_LANES], add_y [ADD_LANES], mk_mul [MUL_LANES];
+  logic [31:0] add_a [ADD_LANES], add_b [ADD_LANES], add_y [ADD_LANES], mk_mul [MUL_LANES], mask_src [ADD_LANES], old_src [ADD_LANES];
   int      wb_half, wb_off;
   logic    wb_mask_op;
   logic [BANKS-1:0] wb_ben;
@@ -347,18 +358,22 @@ module mma_unit
     f32_add u_add (.a(add_a[b]), .b(add_b[b]), .sub(1'b0), .y(add_y[b]));
   end
   for (genvar b = 0; b < MUL_LANES; b++) begin : g_mul
-    f32_mul u_mm (.a(wrow.data[wb_half * MUL_LANES + b]), .b(mask_d[wb_half * MUL_LANES + b]), .y(mk_mul[b]));
+    f32_mul u_mm (.a(wrow.data[wb_half * MUL_LANES + b]), .b(mask_src[b]), .y(mk_mul[b]));
   end
   always_comb begin
     wb_off  = (C < BANKS) ? int'(wrow.j0) % BANKS : 0;
     wb_half = WB_ONE ? wb_off / ADD_LANES : ((wst == W_MCALC2 || wst == W_WRITE) ? 1 : 0);
     wb_mask_op = (wst == W_MCALC) || (wst == W_MCALC2);
     for (int b = 0; b < ADD_LANES; b++) begin
-      add_a[b] = wb_mask_op ? wrow.data[wb_half * ADD_LANES + b] : old_d[wb_half * ADD_LANES + b];
-      add_b[b] = wb_mask_op ? mask_d[wb_half * ADD_LANES + b] : s_masked[wb_half * ADD_LANES + b];
+      // the first mask half reads the landing register, the second its copy; the old value likewise for an unmasked
+      // row (W_ADD from pf_d, W_WRITE from old_d), while a masked row's old value was copied to old_d in W_MASK
+      mask_src[b] = (wst == W_MCALC) ? pf_d[wb_half * ADD_LANES + b] : mask_d[wb_half * ADD_LANES + b];
+      old_src[b]  = (wst == W_ADD && !masked) ? pf_d[wb_half * ADD_LANES + b] : old_d[wb_half * ADD_LANES + b];
+      add_a[b] = wb_mask_op ? wrow.data[wb_half * ADD_LANES + b] : old_src[b];
+      add_b[b] = wb_mask_op ? mask_src[b] : s_masked[wb_half * ADD_LANES + b];
     end
     for (int b = 0; b < BANKS; b++)
-      s_out[b] = !accumulate ? s_masked[b] : WB_ONE ? add_y[b % ADD_LANES] : (b < ADD_LANES) ? s_outq[b] : add_y[b - ADD_LANES];
+      s_out[b] = !accumulate ? s_masked[b] : WB_ONE ? s_outq[b % ADD_LANES] : (b < ADD_LANES) ? s_outq[b] : add_y[b - ADD_LANES];
   end
   function automatic logic [11:0] wb_slot(input int j0);
     return tref_slot(acc_t) + 12'(wide ? j0 / T_N : 0);
@@ -366,18 +381,37 @@ module mma_unit
   function automatic int wb_cg(input int j0);
     return wide ? (j0 % T_N) / BANKS : j0 / BANKS;
   endfunction
-  int w_row, w_j0;
+  int w_row, w_j0, w_i, p_i, p_row, p_j0, rd_row, rd_mi, rd_j0;
+  logic nx_known, nx_pad, pf_want, pf_grant, first_rd, use_p;
+  // the state a taken row starts in: operand ready (prefetched, or landing now), operand outstanding, first read issued
+  // now (W_IDLE only), or nothing yet; padding rows of the last row block are dropped
+  function automatic wstate_t take_next(input logic granted);
+    if (nx_pad) return W_IDLE;
+    if (pf_v || (pf_out && wb_rvalid)) return accumulate ? (masked ? W_MASK : W_ADD) : W_MCALC;
+    if (pf_out) return accumulate ? W_OLD_WAIT : W_MASK_WAIT;
+    if (accumulate) return granted ? W_OLD_WAIT : W_OLD;
+    if (masked) return granted ? W_MASK_WAIT : W_MASK;
+    return W_WRITE;
+  endfunction
   always_comb begin
-    w_row = r0 + int'(wrow.i0) + int'(wrow.i); w_j0 = int'(wrow.j0);
+    w_i = int'(wrow.i0) + int'(wrow.i); w_row = r0 + w_i; w_j0 = int'(wrow.j0);
+    // the row at the converter output (its descriptors are set in the converter's start cycle: known one cycle before
+    // cv_v, which is when the previous row's W_ADD runs)
+    p_i = cv_i0 + cv_i; p_row = r0 + p_i; p_j0 = cv_j0;
+    nx_known = cv_v || (cv_busy && cv_half == CV_HALVES - 1);
+    nx_pad   = p_i >= M;
+    pf_want  = (wst == W_MCALC || wst == W_MCALC2 || wst == W_ADD) && (accumulate || masked) && !pf_out && !pf_v &&
+               nx_known && !nx_pad && (st == S_RUN);
+    first_rd = (wst == W_IDLE) && cv_v && (accumulate || masked) && !pf_out && !pf_v && !nx_pad && (st == S_RUN);
+    use_p = pf_want || first_rd;
+    rd_row = use_p ? p_row : w_row; rd_mi = use_p ? p_i : w_i; rd_j0 = use_p ? p_j0 : w_j0;
     for (int b = 0; b < BANKS; b++) wb_ben[b] = slice_ben(N, w_j0 / BANKS)[b] && (b >= wb_off) && (b < wb_off + C);
     wb_req = '0;
-    case (wst)
-      W_MASK:  wb_req = slice_req(tref_sp(mask_t), tref_slot(mask_t), int'(wrow.i0) + int'(wrow.i), w_j0 / BANKS, 1'b0, '0, '0);
-      W_OLD:   wb_req = slice_req(tref_sp(acc_t), wb_slot(w_j0), w_row, wb_cg(w_j0), 1'b0, '0, '0);
-      W_WRITE: wb_req = slice_req(tref_sp(acc_t), wb_slot(w_j0), w_row, wb_cg(w_j0), 1'b1, wb_ben, s_out);
-      default: ;
-    endcase
-    cv_take  = (wst == W_IDLE) && cv_v && (st == S_RUN);
+    if (wst == W_WRITE) wb_req = slice_req(tref_sp(acc_t), wb_slot(w_j0), w_row, wb_cg(w_j0), 1'b1, wb_ben, s_out);
+    else if (wst == W_OLD || (use_p && accumulate)) wb_req = slice_req(tref_sp(acc_t), wb_slot(rd_j0), rd_row, wb_cg(rd_j0), 1'b0, '0, '0);
+    else if (wst == W_MASK || use_p) wb_req = slice_req(tref_sp(mask_t), tref_slot(mask_t), rd_mi, rd_j0 / BANKS, 1'b0, '0, '0);
+    pf_grant = pf_want && wb_grant;
+    cv_take  = cv_v && (st == S_RUN) && (wst == W_IDLE || (wst == W_WRITE && wb_grant));
     cv_start = (st == S_RUN) && (rf_cnt > 0) && !cv_busy && (!cv_v || cv_take);
     cv_pop   = (CV_HALVES == 1) ? cv_start : (cv_busy && (cv_half == CV_HALVES - 1));   // the row leaves the FIFO with its last lanes
   end
@@ -423,7 +457,7 @@ module mma_unit
         for (int i = 0; i < R; i++) sl_ea[s][i] <= 8'd1;
         for (int j = 0; j < C; j++) sl_eb[s][j] <= 8'd1;
       end
-      rf_rd <= 0; rf_cnt <= 0; wst <= W_IDLE; wrow <= '0; s_masked <= '0; mask_d <= '0; old_d <= '0;
+      rf_rd <= 0; rf_cnt <= 0; wst <= W_IDLE; wrow <= '0; s_masked <= '0; mask_d <= '0; old_d <= '0; pf_d <= '0; pf_out <= 0; pf_v <= 0;
       for (int b = 0; b < ADD_LANES; b++) s_outq[b] <= '0;
       cv_busy <= 0; cv_v <= 0; cv_half <= 0; cv_row <= '0; cv_i0 <= 0; cv_j0 <= 0; cv_i <= 0;
       for (int i = 0; i < R; i++) begin
@@ -586,33 +620,40 @@ module mma_unit
         if (cv_half + 1 >= CV_HALVES) begin cv_busy <= 0; cv_v <= 1; end else cv_half <= cv_half + 1;
       end
 
+      // ---- writeback: the landing register, the prefetch flags, the row take ----
+      if (wb_rvalid) pf_d <= wb_rdata;
+      if (wb_rvalid && pf_out) begin pf_out <= 0; pf_v <= 1; end
+      if (pf_grant) pf_out <= 1;
+      if (cv_take) begin                                           // the taken row owns the prefetch (or its outstanding read)
+        pf_v <= 0; pf_out <= 0;
+        wrow.i <= 4'(cv_i); wrow.i0 <= 10'(cv_i0); wrow.j0 <= 10'(cv_j0); wrow.data <= cv_row; s_masked <= cv_row;
+        popped <= popped + 1;
+      end
       // ---- writeback FSM ----
       case (wst)
-        W_IDLE: if (cv_take) begin
-          wrow.i <= 4'(cv_i); wrow.i0 <= 10'(cv_i0); wrow.j0 <= 10'(cv_j0); wrow.data <= cv_row;
-          popped <= popped + 1;
-          s_masked <= cv_row;
-          if (cv_i0 + cv_i >= M) wst <= W_IDLE;                    // padding row of the last row block
-          else if (masked) wst <= W_MASK;
-          else wst <= accumulate ? W_OLD : W_WRITE;
-        end
-        W_MASK: if (wb_grant) wst <= W_MASK_WAIT;
-        W_MASK_WAIT: if (wb_rvalid) begin mask_d <= wb_rdata; wst <= W_MCALC; end
-        W_MCALC: begin                                             // lanes 0 .. 7 of the mask add / mul
-          for (int b = 0; b < ADD_LANES; b++) s_masked[wb_half * ADD_LANES + b] <= mask_mul ? mk_mul[b] : add_y[b];
-          wst <= WB_ONE ? (accumulate ? W_OLD : W_WRITE) : W_MCALC2;
-        end
-        W_MCALC2: begin                                            // lanes 8 .. 15
-          for (int b = 0; b < ADD_LANES; b++) s_masked[ADD_LANES + b] <= mask_mul ? mk_mul[b] : add_y[b];
-          wst <= accumulate ? W_OLD : W_WRITE;
-        end
+        W_IDLE: if (cv_take) wst <= take_next(wb_grant);           // the first read goes out with the take
         W_OLD: if (wb_grant) wst <= W_OLD_WAIT;
-        W_OLD_WAIT: if (wb_rvalid) begin old_d <= wb_rdata; wst <= WB_ONE ? W_WRITE : W_ADD; end
+        W_OLD_WAIT: if (wb_rvalid) wst <= masked ? W_MASK : W_ADD;
+        W_MASK: begin                                              // the old value leaves pf_d before the mask lands there
+          if (accumulate) old_d <= pf_d;
+          if (wb_grant) wst <= W_MASK_WAIT;
+        end
+        W_MASK_WAIT: if (wb_rvalid) wst <= W_MCALC;
+        W_MCALC: begin                                             // lanes 0 .. 7 of the mask add / mul (mask from pf_d)
+          for (int b = 0; b < ADD_LANES; b++) s_masked[wb_half * ADD_LANES + b] <= mask_mul ? mk_mul[b] : add_y[b];
+          mask_d <= pf_d;
+          wst <= WB_ONE ? (accumulate ? W_ADD : W_WRITE) : W_MCALC2;
+        end
+        W_MCALC2: begin                                            // lanes 8 .. 15 (mask from mask_d)
+          for (int b = 0; b < ADD_LANES; b++) s_masked[ADD_LANES + b] <= mask_mul ? mk_mul[b] : add_y[b];
+          wst <= accumulate ? W_ADD : W_WRITE;
+        end
         W_ADD: begin                                               // lanes 0 .. 7 of old + result; 8 .. 15 add in W_WRITE
           for (int b = 0; b < ADD_LANES; b++) s_outq[b] <= add_y[b];
+          if (!masked) old_d <= pf_d;
           wst <= W_WRITE;
         end
-        W_WRITE: if (wb_grant) wst <= W_IDLE;
+        W_WRITE: if (wb_grant) wst <= cv_take ? take_next(1'b0) : W_IDLE;
         default: wst <= W_IDLE;
       endcase
     end

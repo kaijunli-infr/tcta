@@ -80,6 +80,26 @@ def prog_mma(m):
     return p, [dict(kind="bitexact")], None
 
 
+def prog_mma_mask(m):
+    """MMA.MASKED (phase 8 K3): a mask-add product and a mask-mul accumulate on 64x128x128, the mask an f32 ACC tile, so
+    the harness covers the writeback's mask read and both mask ops (no family program emits MMA.MASKED)."""
+    A = rng.standard_normal((64, 128)); B = rng.standard_normal((128, 128))
+    Mk = rng.standard_normal((64, 128)).astype(np.float32)
+    ra = put_bf16(m, 0, A); rb = put_bf16(m, 1 << 16, B)
+    m.dram_write(1 << 17, Mk); rm = Region(1 << 17, "f32", (64, 128), (512, 4))
+    ro = Region(1 << 20, "f32", (64, 128), (512, 4))
+    p = Program()
+    p.load2d(INP(0), ra, 64, 128); p.push(Q.LOAD, Q.MMA)
+    p.load2d(WGT(0), rb, 128, 128); p.push(Q.LOAD, Q.MMA)
+    p.load2d(ACC(1), rm, 64, 128); p.push(Q.LOAD, Q.MMA)
+    p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD)
+    p.mma_masked(ACC(0), INP(0), WGT(0), ACC(1))
+    p.mma_masked(ACC(0), INP(0), WGT(0), ACC(1), accumulate=True, mask_mode="mul"); p.push(Q.MMA, Q.STORE)
+    p.pop(Q.STORE, Q.MMA); p.store2d(ACC(0), ro, 64, 128)
+    p.finish()
+    return p, [dict(kind="bitexact")], None
+
+
 def prog_vec(m):
     """The FA-style VEC sequence on one tile without SFU ops: bit-exact target for the VEC pipe."""
     A = rng.standard_normal((64, 128)); B = rng.standard_normal((128, 128))
@@ -101,6 +121,40 @@ def prog_vec(m):
     p.pop(Q.STORE, Q.VEC); p.store2d(VEC(2), ro2, 64, 1)
     p.finish()
     return p, [dict(kind="bitexact")], None
+
+
+def prog_sfu(m):
+    """The SFU kinds on tiles (phase 8 K3): VEXP2 and VRCP on 64x128, VEXP2.SUM 64x128 with a column-vector subtrahend,
+    VLOG2, VSIGMOID and VEXP2 with a vector on 64x64, VGATE decay 64x64, VEXP2 with a vector on [64, 1] -- every SFU kind in
+    row order and the column-order vector case (FA only has [64, 1] VEXP2 / VRCP and VEXP2.SUM 64x64). Checked against the
+    simulator to a row-relative 2^-10 (the table-based SFU is within 2 ulp of BF16; measured 8e-5)."""
+    X0 = rng.standard_normal((64, 128)).astype(np.float32)
+    X1 = (np.abs(rng.standard_normal((64, 64))) + 0.5).astype(np.float32)
+    G = rng.standard_normal((64, 64)).astype(np.float32)
+    V = rng.standard_normal((64, 1)).astype(np.float32)
+    m.dram_write(0, X0); m.dram_write(1 << 16, X1); m.dram_write(1 << 17, G); m.dram_write(1 << 18, V)
+    r0 = Region(0, "f32", (64, 128), (512, 4)); r1 = Region(1 << 16, "f32", (64, 64), (256, 4))
+    rg = Region(1 << 17, "f32", (64, 64), (256, 4)); rv = Region(1 << 18, "f32", (64, 1), (4, 4))
+    o0 = Region(1 << 20, "f32", (64, 128), (512, 4)); o1 = Region(1 << 21, "f32", (64, 64), (256, 4))
+    o2 = Region(1 << 22, "f32", (64, 1), (4, 4))
+    p = Program()
+    p.load2d(ACC(0), r0, 64, 128); p.push(Q.LOAD, Q.VEC)
+    p.load2d(ACC(1), r1, 64, 64); p.push(Q.LOAD, Q.VEC)
+    p.load2d(ACC(2), rg, 64, 64); p.push(Q.LOAD, Q.VEC)
+    p.load2d(VEC(0), rv, 64, 1); p.push(Q.LOAD, Q.VEC)
+    p.pop(Q.VEC, Q.LOAD); p.pop(Q.VEC, Q.LOAD); p.pop(Q.VEC, Q.LOAD); p.pop(Q.VEC, Q.LOAD)
+    p.vexp2(ACC(0)); p.vrcp(ACC(0)); p.vexp2_sum(ACC(0), VEC(1), vec=VEC(0))
+    p.vlog2(ACC(1)); p.vsigmoid(ACC(1)); p.vexp2(ACC(1), vec=VEC(0)); p.vgate(ACC(1), ACC(2), "decay")
+    p.vmul(VEC(1), imm=2.0 ** -13); p.vexp2(VEC(1), vec=VEC(0))  # a [64, 1] SFU op with a column-vector subtrahend (column order)
+    p.push(Q.VEC, Q.STORE); p.push(Q.VEC, Q.STORE); p.push(Q.VEC, Q.STORE)
+    p.pop(Q.STORE, Q.VEC); p.store2d(ACC(0), o0, 64, 128)
+    p.pop(Q.STORE, Q.VEC); p.store2d(ACC(1), o1, 64, 64)
+    p.pop(Q.STORE, Q.VEC); p.store2d(VEC(1), o2, 64, 1)
+    p.finish()
+    tol = 2.0 ** -10
+    return p, [dict(kind="f32tol", name="exp2/rcp/exp2.sum 64x128", addr=1 << 20, rows=64, cols=128, stride=512, tol=tol),
+               dict(kind="f32tol", name="log2/sigmoid/exp2 vec/decay 64x64", addr=1 << 21, rows=64, cols=64, stride=256, tol=tol),
+               dict(kind="f32tol", name="exp2.sum row sums, exp2 vec [64, 1]", addr=1 << 22, rows=64, cols=1, stride=4, tol=tol)], None
 
 
 def prog_gemm(m):
@@ -222,7 +276,7 @@ def prog_neg_deadlock(m):
     return p, [], DeviceConfig(t_deadlock=200)
 
 
-PROGRAMS = dict(dma_copy=prog_dma_copy, mma=prog_mma, vec=prog_vec, gemm=prog_gemm, fa=prog_fa, loop=prog_loop, gather=prog_gather,
+PROGRAMS = dict(dma_copy=prog_dma_copy, mma=prog_mma, mma_mask=prog_mma_mask, vec=prog_vec, sfu=prog_sfu, gemm=prog_gemm, fa=prog_fa, loop=prog_loop, gather=prog_gather,
                 neg_untokened=prog_neg_untokened, neg_leak=prog_neg_leak, neg_deadlock=prog_neg_deadlock)
 OUT = os.path.join(HERE, "vectors")
 

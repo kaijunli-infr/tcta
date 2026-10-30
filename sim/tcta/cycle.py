@@ -510,10 +510,13 @@ def _vec_tiles(op: str, args: dict) -> list:
 
 
 def _rtl_vec_cycles(T: DeviceTiming, op: str, M: int, N: int, args: dict) -> int:
-    """One [row, 16-column] slice per operand read per cycle; SFU ops hold the slice for sfu_slice_cycles; VEXP2.SUM one
-    more per slice plus the partial add (sfu_sum_row_extra); row reductions end vec_reduce_extra cycles after their
-    last slice (the shared four-cycle reducer, phase 8 K0.2) plus the column-element write of the last result; VTOPK
-    k passes over the row; per-instruction overhead.
+    """One [row, 16-column] slice per operand read per cycle; SFU ops cost sfu_slice_cycles per slice (phase 8 K3: the
+    next slice's read is issued two lane steps before the end, so the lanes never idle; sfu_fill_cycles once for the
+    first slice's return; a second operand read -- VGATE decay's gate tile -- or a row-vector read takes an issue slot
+    and its return, sfu_vec_read_cycles, VEXP2.SUM's vector read twice that since its partial add blocks the slice
+    read a cycle longer); VEXP2.SUM sfu_sum_slice_extra more per slice plus the partial add (sfu_sum_row_extra; both 0
+    since K3); row reductions end vec_reduce_extra cycles after their last slice (the shared four-cycle reducer,
+    phase 8 K0.2) plus the column-element write of the last result; VTOPK k passes over the row; per-instruction overhead.
 
     Erratum E2 (phase 8 K2): a 2-D VEC vector operand is read as a column slice once per 16 rows (not once per row);
     an elementwise op whose tile operands are all 2-D VEC tiles runs in column-slice order (N * ceil(M / 16) slices:
@@ -533,23 +536,28 @@ def _rtl_vec_cycles(T: DeviceTiming, op: str, M: int, N: int, args: dict) -> int
     vec_reads = (n_rg if _vec2d(vec_t) or op == "VSCALE_ACC" else M) if has_vec else 0
     if op == "VSCALE_ACC" and args.get("wide"):
         vec_reads *= 4                                               # re-read at every slot
+    decay = op == "VGATE" and args.get("op") == "decay"             # acc * exp2(gate): an SFU kind with two operand reads
     cs = op in _CS_OPS and bool(tiles) and all(_vec2d(t) for t in tiles)
     if cs:
         slices = N * n_rg
-        if op in _SFU_ROW_OPS:
-            return T.vec_op_overhead_cycles + slices * T.sfu_slice_cycles - 1       # the vector read overlaps the steps
+        if op in _SFU_ROW_OPS:                                       # each slice is a row group: a vector read per slice
+            return T.vec_op_overhead_cycles + T.sfu_fill_cycles + slices * (T.sfu_slice_cycles + (T.sfu_vec_read_cycles if has_vec else 0))
         if op == "VFILL":
             return T.vec_op_overhead_cycles + slices - 1
         reads = 3 if op == "VSEL" else 1
         return T.vec_op_overhead_cycles + slices * reads + vec_reads
     # row order: a 2-D VEC tile among the tile operands is read element by element
     serial = sum((N - ncg) for t in tiles if _vec2d(t) and op not in ("VROWMAX", "VROWSUM", "VEXP2.SUM"))
-    if op in _SFU_ROW_OPS:
-        per_row = ncg * T.sfu_slice_cycles + serial                  # the row-vector read overlaps the SFU steps
-        vec_reads = 0
+    extra = 0
+    if op in _SFU_ROW_OPS or decay:
+        reads = 2 if decay else 1
+        per_row = ncg * (T.sfu_slice_cycles + T.sfu_vec_read_cycles * (reads - 1)) + serial
+        vec_reads *= T.sfu_vec_read_cycles
+        extra = T.sfu_fill_cycles
     elif op == "VEXP2.SUM":
         per_row = ncg * (T.sfu_slice_cycles + T.sfu_sum_slice_extra) + T.sfu_sum_row_extra
-        vec_reads *= 2
+        vec_reads *= 2 * T.sfu_vec_read_cycles
+        extra = T.sfu_fill_cycles + T.vec_reduce_extra + 1
     elif op == "VTOPK":
         per_row = int(args.get("k", 1)) * (ncg + 1)
     else:
@@ -557,7 +565,8 @@ def _rtl_vec_cycles(T: DeviceTiming, op: str, M: int, N: int, args: dict) -> int
         if op == "VMASK" and isinstance(vec_t, TRef):
             reads = 2                                                # tile mask: mask slice + acc slice
         per_row = reads * ncg + serial
-    extra = T.vec_reduce_extra + 1 if op in ("VROWMAX", "VROWSUM") else T.vec_reduce_extra if op == "VEXP2.SUM" else 0
+    if op in ("VROWMAX", "VROWSUM"):
+        extra = T.vec_reduce_extra + 1
     if op == "VFILL":
         extra -= 1
     return T.vec_op_overhead_cycles + M * per_row + vec_reads + extra
@@ -565,8 +574,8 @@ def _rtl_vec_cycles(T: DeviceTiming, op: str, M: int, N: int, args: dict) -> int
 
 def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, masked: bool,
                     transpose: bool = False, mask_mul: bool = False) -> tuple:
-    """-> (cycles issue to done, array occupancy) of the v0 mma_unit (rtl/src/mma_unit.sv, phase 8 K0.3), replayed
-    cycle by cycle:
+    """-> (cycles issue to done, array occupancy) of the v0 mma_unit (rtl/src/mma_unit.sv, phase 8 K0.3 unit, K3
+    writeback), replayed cycle by cycle:
 
     * setup: 2 cycles from issue to the run state; the A and B operand fills start in the first run cycle.
     * fills: the A fill reads one row block (16 rows x n_cg slices, 16 * n_cg cycles) into one of four buffer
@@ -576,8 +585,12 @@ def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, m
     * blocks (row-block major) start every P = max(K, mac_rows) cycles when both halves are ready and the result
       FIFO holds at most mma_rf_rows - mac_rows committed rows.
     * a block's row i lands in the result FIFO K + mma_result_latency + i cycles after its start; the converter
-      takes a row per mma_cv_row_cycles and hands it to the writeback, which costs mma_wb_row_cycles per row (+ extras for
-      accumulate / masked add / masked mul); padding rows of the last row block cost the converter only.
+      takes a row per mma_cv_row_cycles and offers it to the writeback, whose port FSM is replayed state by state
+      (phase 8 K3, rows pipelined through the port): a row's first operand read (the old accumulator, else the
+      mask) is prefetched while the previous row adds (MCALC, MCALC2, ADD) and the write cycle takes the next row,
+      so an accumulated row streams at 2 cycles (read old ‖ add, write), a mask-added row at 3, a masked
+      accumulate at 6; from idle the first read goes out with the take. Reads return the next cycle, grants are
+      immediate (no port contention). Padding rows of the last row block cost the converter only.
     * completion: 2 cycles (metadata write, done) after the last row is written.
     """
     R, C = T.mac_rows, T.mac_cols
@@ -590,8 +603,8 @@ def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, m
     f_b = C * n_cg if transpose else K
     ready_lat = T.mma_fill_ready_latency
     release = K + T.mma_release_latency
-    wb_states = T.mma_wb_row_cycles - 1 + (T.mma_wb_acc_extra if accumulate else 0) + \
-        ((T.mma_wb_mask_mul_extra if mask_mul else T.mma_wb_mask_extra) if masked else 0)
+    wb_one = C <= 8                                     # the row fits one adder half (BANKS / 2): one mask pass, one add pass
+    operand = accumulate or masked                      # the row has a first operand read (old value, else mask)
     # buffer halves as the registers show them in the current cycle, plus the pending changes
     a_ready = [False] * HALVES; a_busy = [False] * HALVES
     b_ready = [False] * HALVES; b_busy = [False] * HALVES
@@ -603,7 +616,8 @@ def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, m
     ai, rf_cnt = 0, 0                                   # rows arrived, rows in the FIFO
     cv_busy_until, cv_v, cv_padding = 0, False, False   # converter: end of its cycles, row waiting for the writeback
     cv_pop_at: list = []
-    wst_idle_at, popped = 0, 0
+    wst, popped = "IDLE", 0                             # writeback FSM state, rows taken
+    pf_out, pf_v, rd_at = False, False, None            # prefetch outstanding / landed; cycle of the last read grant
 
     def free(ready, busy, pend_ready, h):
         return not ready[h] and not busy[h] and h not in pend_ready
@@ -623,10 +637,12 @@ def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, m
             rf_cnt += 1; ai += 1
         while cv_pop_at and cv_pop_at[0] <= t:
             cv_pop_at.pop(0); rf_cnt -= 1; committed -= 1
-        wst_idle = wst_idle_at <= t
         cv_busy = cv_busy_until > t
+        rvalid = rd_at == t - 1                         # the read granted last cycle returns now
+        if rvalid and pf_out:
+            pf_out, pf_v = False, True
         # ---- completion (run state -> metadata write -> done) ----
-        if blk >= nb and popped >= nb * R and wst_idle and rf_cnt == 0 and not cv_busy and not cv_v:
+        if blk >= nb and popped >= nb * R and wst == "IDLE" and rf_cnt == 0 and not cv_busy and not cv_v:
             return T.mma_setup_cycles + t + 2, nb * P
         # ---- fill engines (they test the ready / busy registers before this cycle's block start changes them) ----
         if af_left == 0 and af_ib < nbi and free(a_ready, a_busy, a_ready_at, af_ib % HALVES):
@@ -656,12 +672,38 @@ def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, m
                 a_busy[ha] = True; a_free_at[ha] = t + release
                 if jb == nbj - 1: a_ready[ha] = False
                 committed += R; last_start = t; blk += 1
-        # ---- converter (mma_cv_row_cycles per row) and writeback ----
-        cv_take = wst_idle and cv_v
-        if cv_take:
-            cv_v = False; popped += 1
-            wst_idle_at = t + 1 + (0 if cv_padding else wb_states)
-        if rf_cnt > 0 and not cv_busy and (not cv_v or cv_take):
+        # ---- writeback port FSM (rtl/src/mma_unit.sv, phase 8 K3) ----
+        nx_known = cv_v or (cv_busy and cv_busy_until == t + 1)      # the converter-output row's descriptors are known
+        take = cv_v and wst in ("IDLE", "WRITE")
+        first_rd = wst == "IDLE" and cv_v and operand and not pf_out and not pf_v and not cv_padding
+        pf_want = wst in ("MCALC", "MCALC2", "ADD") and operand and not pf_out and not pf_v and nx_known and not cv_padding
+        if first_rd or pf_want or wst in ("OLD", "MASK"):
+            rd_at = t
+
+        def take_next(granted):
+            if cv_padding: return "IDLE"
+            if pf_v or (pf_out and rvalid): return ("MASK" if masked else "ADD") if accumulate else "MCALC"
+            if pf_out: return "OLD_WAIT" if accumulate else "MASK_WAIT"
+            if accumulate: return "OLD_WAIT" if granted else "OLD"
+            if masked: return "MASK_WAIT" if granted else "MASK"
+            return "WRITE"
+
+        if wst == "IDLE": nxt = take_next(first_rd) if take else "IDLE"
+        elif wst == "OLD": nxt = "OLD_WAIT"
+        elif wst == "OLD_WAIT": nxt = ("MASK" if masked else "ADD") if rvalid else wst
+        elif wst == "MASK": nxt = "MASK_WAIT"
+        elif wst == "MASK_WAIT": nxt = "MCALC" if rvalid else wst
+        elif wst == "MCALC": nxt = ("ADD" if accumulate else "WRITE") if wb_one else "MCALC2"
+        elif wst == "MCALC2": nxt = "ADD" if accumulate else "WRITE"
+        elif wst == "ADD": nxt = "WRITE"
+        else: nxt = take_next(False) if take else "IDLE"             # WRITE
+        if take:
+            cv_v = False; popped += 1; pf_v = False; pf_out = False
+        if pf_want:
+            pf_out = True
+        wst = nxt
+        # ---- converter (mma_cv_row_cycles per row) ----
+        if rf_cnt > 0 and not cv_busy and (not cv_v or take):
             cv_busy_until = t + T.mma_cv_row_cycles; cv_pop_at.append(t + T.mma_cv_row_cycles)
             cv_padding = arrivals[ai - rf_cnt][1]
         if cv_busy_until == t + 1:

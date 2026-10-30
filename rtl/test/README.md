@@ -3,7 +3,7 @@
 ```
 make build                     # Verilate tb_top + the core (obj_dir_tc0; TOKEN_CHECK=1 -> obj_dir_tc1, FORMAL=1 -> *_formal)
 make run PROG=gemm             # run vectors/gemm and compare with the simulator's expectations
-make all                       # the ten programs below (neg_untokened with TOKEN_CHECK=1)
+make all                       # the twelve programs below (neg_untokened with TOKEN_CHECK=1)
 make all FORMAL=1              # the same with the `ifdef FORMAL properties compiled as runtime assertions
 make lint                      # verilator --lint-only -Wall on the core
 python gen_vectors.py [names]  # (re)generate vectors/<name>/ from the simulator
@@ -18,7 +18,9 @@ Interpreter: `~/Projects/tilelang-cutoff/.venv/bin/python` (`PYTHON=` in the Mak
 |---|---|---|
 | `dma_copy` | LOAD.2D f32 64×64 into VEC, STORE.2D back | bit-exact DRAM |
 | `mma` | LOAD INP/WGT, MMA plain, accumulate, A from a converted ACC tile (plain, accumulate), VCVT in place, two f32 STOREs | bit-exact |
+| `mma_mask` | MMA.MASKED add and mask-mul accumulate on 64×128×128, the mask an f32 ACC tile (phase 8 K3: the writeback's mask path) | bit-exact |
 | `vec` | the FA VEC chain on one 64×128 tile without SFU ops (VFILL, VROWMAX, VMAX, VSUB vec, VMUL, VADD, VROWSUM, VSCALE_ACC, VNEG, VCOPY, VCVT), two STOREs | bit-exact |
+| `sfu` | every SFU kind on tiles (phase 8 K3): VEXP2, VRCP, VEXP2.SUM vec on 64×128; VLOG2, VSIGMOID, VEXP2 vec, VGATE decay on 64×64; VEXP2 vec on `[64, 1]` | `f32tol`: row-relative 2⁻¹⁰ against the simulator (table-based SFU, measured ≤ 1e-4) |
 | `gemm` | the compiler's GEMM program (`model/sweeps.fam_gemm`, `gemm_partial` fixture) | bit-exact |
 | `fa` | the compiler's flash-attention program (`fam_fa`, `flash_attn_gqa`, 4 KV tiles) | §9 row-max tolerance 2⁻⁷ against the fixture (SFU paths), `ref.npy` |
 | `loop` | front-end micro-test: VCOUNT → LOOP r, static nested loops, loop-variant `row0` (extension words) | bit-exact; its `FE DISP` trace lines feed `calibrate.py` |

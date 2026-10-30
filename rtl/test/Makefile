@@ -48,7 +48,9 @@ run: build
 all:
 	$(MAKE) run PROG=dma_copy
 	$(MAKE) run PROG=mma
+	$(MAKE) run PROG=mma_mask
 	$(MAKE) run PROG=vec
+	$(MAKE) run PROG=sfu
 	$(MAKE) run PROG=gemm
 	$(MAKE) run PROG=fa
 	$(MAKE) run PROG=loop

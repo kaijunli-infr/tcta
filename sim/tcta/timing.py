@@ -92,32 +92,31 @@ class DeviceTiming:
     dma_store_r16_slice_cycles: int = 9
     dma_idx_slice_cycles: int = 3           # LOAD.IDX / STORE.IDX: the index-slice read every 16 rows (front stage)
     #   VEC: one [row, 16-column] slice per operand read per cycle (a column vector of M elements costs M cycles), a
-    #   row-vector operand one read per row, SFU ops sfu_slice_cycles per slice (VEXP2.SUM one more per slice and
-    #   one row write), plus vec_op_overhead_cycles per instruction
+    #   row-vector operand one read per row, SFU ops sfu_slice_cycles per slice (phase 8 K3: 4, the slices pipelined;
+    #   sfu_fill_cycles once; an extra operand or row-vector read sfu_vec_read_cycles; VEXP2.SUM sfu_sum_slice_extra
+    #   more per slice and sfu_sum_row_extra per row), plus vec_op_overhead_cycles per instruction
     vec_op_overhead_cycles: int = 6
     sfu_slice_cycles: int = 6
+    sfu_fill_cycles: int = 0
+    sfu_vec_read_cycles: int = 1
     sfu_sum_slice_extra: int = 1
-    sfu_sum_row_extra: int = 0          # VEXP2.SUM: the partial add on the lane ALUs after a row's last slice (K0.2: 1)
+    sfu_sum_row_extra: int = 0          # VEXP2.SUM: the partial add on the lane ALUs after a row's last slice (K0.2: 1, K3: 0)
     vec_reduce_extra: int = 0           # VROWMAX / VROWSUM / VEXP2.SUM: the shared reducer's levels after the last slice (K0.2: 4)
     #   MMA (rtl/src/mma_unit.sv, replayed cycle by cycle in cycle._rtl_mma_cycles): mma_setup_cycles from issue to
     #   the run state; operand fills of 16 * ceil16(K) / 16 cycles per A row block and K (MMA) or 16 * n_cg (MMA.T)
     #   per B block into four buffer halves, a half ready mma_fill_ready_latency after its last read and free again
     #   K + mma_release_latency after the last block start that used it; blocks start every P = max(K, mac_rows) cycles
     #   while the result FIFO (mma_rf_rows) has room for a block; a block's row i lands in the FIFO K +
-    #   mma_result_latency + i cycles after its start; the converter takes mma_cv_row_cycles per row and the writeback
-    #   mma_wb_row_cycles (+ extras for accumulate / masked add / masked mul; padding rows cost the converter only).
-    #   Phase 8 L3 (KV260): 8 writeback adders in two lane halves (+1 per accumulated or mask-added row); the converter
-    #   keeps 8 lanes (4 lanes would saturate at P = 64).
+    #   mma_result_latency + i cycles after its start; the converter takes mma_cv_row_cycles per row and hands it to
+    #   the writeback, whose port FSM cycle._rtl_mma_cycles replays (phase 8 K3: rows pipelined through the port, an
+    #   accumulated row 2 cycles, a mask-added row 3; padding rows cost the converter only). Phase 8 L3 (KV260): 8
+    #   writeback adders in two lane halves; the converter keeps 8 lanes (4 lanes would saturate at P = 64).
     #   The queue issues the next instruction the cycle after the previous one completes (no drain overlap).
     mma_setup_cycles: int = 2
     mma_fill_ready_latency: int = 2
     mma_release_latency: int = 20
     mma_result_latency: int = 21
     mma_cv_row_cycles: int = 2
-    mma_wb_row_cycles: int = 2
-    mma_wb_acc_extra: int = 2
-    mma_wb_mask_extra: int = 3
-    mma_wb_mask_mul_extra: int = 4
     mma_rf_rows: int = 32
     #   front end: fe_word_cycles per instruction word (fetch, decode, dispatch; PUSH/POP words fe_sync_word_cycles),
     #   fe_ext_word_cycles per extension word plus fe_ext_entry_cycles per loop-variant entry and fe_mod_entry_cycles
@@ -176,9 +175,10 @@ KV260 = DeviceTiming(
     dram_latency_cycles=24,
     dma_load_setup_cycles=5, dma_store_setup_cycles=4, dma_load_row_overhead=1, dma_store_row_overhead=1, dma_tail_cycles=1,
     dma_rows_in_flight=8, dma_store_r16_slice_cycles=9, dma_idx_slice_cycles=3,
-    vec_op_overhead_cycles=6, sfu_slice_cycles=6, sfu_sum_slice_extra=1, sfu_sum_row_extra=1, vec_reduce_extra=4, sfu_fused_sub_sum=True,
+    vec_op_overhead_cycles=6, sfu_slice_cycles=4, sfu_fill_cycles=1, sfu_vec_read_cycles=2, sfu_sum_slice_extra=0, sfu_sum_row_extra=0,
+    vec_reduce_extra=4, sfu_fused_sub_sum=True,
     mma_setup_cycles=2, mma_fill_ready_latency=2, mma_release_latency=20, mma_result_latency=21,
-    mma_cv_row_cycles=2, mma_wb_row_cycles=2, mma_wb_acc_extra=3, mma_wb_mask_extra=4, mma_wb_mask_mul_extra=4, mma_rf_rows=32,
+    mma_cv_row_cycles=2, mma_rf_rows=32,
     fe_word_cycles=3, fe_sync_word_cycles=3, fe_ext_word_cycles=2, fe_ext_entry_cycles=1, fe_mod_entry_cycles=1,
     loop_overhead_cycles=2, vcount_to_loop_latency=1, loop_r_count_cycles=1, iq_depth=16,
     push_visible_cycles=1,
@@ -190,11 +190,10 @@ KV260 = DeviceTiming(
 
 # Phase 8 L5 measurement: the same core with the 8 x 8 MAC array (rtl `TCTA_MAC8`, `make all MAC8=1`). Blocks start every
 # max(K, 8) cycles, the result FIFO holds 16 rows, a result row converts in one pass and the writeback works on one
-# adder half (no second mask pass, old + result straight into the write); the fill, release and result latencies
-# follow the array size (K + MAC_ROWS + 4, K + MAC_COLS + 5).
+# adder half (one mask pass, one add pass); the fill, release and result latencies follow the array size
+# (K + MAC_ROWS + 4, K + MAC_COLS + 5).
 KV260_L5 = replace(KV260, name="v1-kv260-mac8", mac_rows=8, mac_cols=8,
-                   mma_release_latency=12, mma_result_latency=13, mma_cv_row_cycles=1,
-                   mma_wb_acc_extra=2, mma_wb_mask_extra=3, mma_wb_mask_mul_extra=3, mma_rf_rows=16)
+                   mma_release_latency=12, mma_result_latency=13, mma_cv_row_cycles=1, mma_rf_rows=16)
 
 # Config C after ISA v0.1.4 §11 (planning rules, not calibrated): FIFO 8, request striping 2, operand broadcast, WGT 32 slots (one bank each),
 # outstanding window 512 >= a striped gather's demand (one request per cycle x (latency + transfer) ~ 302).

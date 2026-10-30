@@ -131,7 +131,7 @@ def _rng(v):
 
 if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    names = args or ["dma_copy", "mma", "vec", "gemm", "fa", "loop"]
+    names = args or ["dma_copy", "mma", "mma_mask", "vec", "sfu", "gemm", "fa", "loop"]
     # --timing NAME: the calibrated descriptor (default KV260; KV260_L5 for a `make all MAC8=1` trace)
     cal = KV260
     for a in sys.argv[1:]:

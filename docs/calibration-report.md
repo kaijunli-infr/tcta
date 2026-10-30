@@ -22,13 +22,25 @@ rules stay available as `KV260_PLAN` and are unchanged for `CONFIG_C`.
 | program | RTL cycles | model, planning (`KV260_PLAN`) | model, calibrated (`KV260`) |
 |---|---|---|---|
 | dma_copy (LOAD f32 64×64 into a 2-D VEC tile, STORE; E2: element-serial) | 8396 | 2248 (−73.2 %) | 8393 (−0.0 %) |
-| mma (2 LOAD, 4 MMA forms, VCVT, 2 STORE) | 23230 | 24280 (+4.5 %) | 23228 (−0.0 %) |
+| mma (2 LOAD, 4 MMA forms, VCVT, 2 STORE) | 23138 | 24280 (+4.9 %) | 23136 (−0.0 %) |
+| mma_mask (MMA.MASKED add, mask-mul accumulate, 64×128×128; K3) | 16281 | 15568 (−4.4 %) | 16279 (−0.0 %) |
 | vec (the FA VEC chain on one tile) | 14610 | 14056 (−3.8 %) | 14608 (−0.0 %) |
+| sfu (every SFU kind on tiles: VEXP2 / VRCP / VEXP2.SUM 64×128, VLOG2 / VSIGMOID / VEXP2 vec / VGATE decay 64×64, VEXP2 vec `[64, 1]`; K3) | 18898 | 22028 (+16.6 %) | 18933 (+0.2 %) |
 | **gemm** (compiler GEMM, 50×100·100×96) | **5917** | 5633 (−4.8 %) | **5914 (−0.1 %)** |
-| **fa** (compiler FA, 4 KV tiles of 64) | **26049** | 27856 (+6.9 %) | **26040 (−0.0 %)** |
+| **fa** (compiler FA, 4 KV tiles of 64) | **21593** | 27856 (+29.0 %) | **21584 (−0.0 %)** |
 | loop (front-end micro-test; its VEC tiles are 2-D slots) | 1031 | 1096 (+6.3 %) | 955 (−7.4 %) |
 | gather (LOAD.IDX f32 / bf16 / f4.r16 / f4.b32, STORE.IDX, STORE f4.r16 ×3, i32) | 23089 | 17712 (−23.3 %) | 23085 (−0.0 %) |
 
+Re-measured after phase 8 K3 (2026-10-30, the SFU's slices pipelined and the
+MMA writeback pipelined through its port: FA 26049 → 21593 (−17.1 %), its PV
+accumulate 1436 → 1150 and VEXP2.SUM 64×64 1874 → 1052; mma 23230 → 23138;
+two programs join the table, `mma_mask` (the masked writeback, bit-exact)
+and `sfu` (every SFU kind on tiles, to a 2⁻¹⁰ row-relative tolerance)).
+Every MMA and SFU row is reproduced exactly, the writeback by a
+state-by-state replay of its FSM; `sfu`'s +0.2 % is one DMA row (a 64×1 f32
+LOAD into a 2-D VEC slot, 251 vs 288: the rows-in-flight bound over-charges
+one-column rows). The planning model is now 29 % *over* FA: its unfused SFU
+rule (3 passes, 3072 per VEXP2.SUM 64×64) is the slow one (§4).
 Re-measured after phase 8 K2 (2026-10-29, erratum E2: the VEC pad's 2-D slots
 banked by row; `[64, 1]` ops 70–134 → 9–14 cycles, FA 32109 → 26049, vec
 14910 → 14610; `dma_copy`, `loop` and `gather` move `[M, N > 1]` tiles through
@@ -51,12 +63,12 @@ the DMA. Earlier: after K0.2 / K0.3 / L1–L3 mma 30512, fa 39919; phase 7 mma
 GEMM and FA are within 10 % (the J5 bar), within 0.2 % in fact, but only
 after the rule changes of §1: with the planning rules the model
 underestimated the v0 core by 28–50 % (phase 7); after K1 the DMA is the
-planned streaming machine and after K2 the VEC vectors are, and the planning
-model is within 7 % on both families (FA now 6.9 % *over* the RTL). Per the
-decision rule of the task (§3) that is **PASS-WITH-CAVEATS** for J5; the
-caveat is that the core is still not the planned machine in two places (the
-SFU's 6 cycles per slice, the front end), which §4 quantifies and §5 turns
-into the RTL work that would make it so.
+planned streaming machine, after K2 the VEC vectors and after K3 the SFU and
+the MMA writeback are, and the planning model is 4.8 % under on GEMM and 29 %
+*over* on FA (its own SFU rule is now the slow one). Per the decision rule of
+the task (§3) that is **PASS-WITH-CAVEATS** for J5; the caveat is that the
+core is still not the planned machine in one place (the front end), which §4
+quantifies and §5 turns into the RTL work that would make it so.
 
 ## 1. What was measured, parameter by parameter
 
@@ -121,7 +133,7 @@ family's loop; `rtl/README.md` §2).
 |---|---|---|
 | occupancy | `⌈M/16⌉·⌈N/16⌉·K` | blocks start every `P = max(K, 16)` once their operand halves are filled: identical for K ≥ 16 (phase 7's unit needed `ceil16(K)`, K = 100 cost 112) |
 | operand fills | — | A: `16·⌈K/16⌉` slice reads per row block; B: `K` reads per block (`MMA.T`: `16·⌈K/16⌉`); four buffer halves each, filled back to back ahead of the array, a half ready 2 cycles after its last read and free `K + 20` cycles after the last block start that used it. The first block starts `max(16·⌈K/16⌉, K) + 3` cycles after issue; the fills otherwise hide behind `P` except `MMA.T` with K not a multiple of 16 (fill-bound at `16·⌈K/16⌉` per block) |
-| drain / `mma_latency` | 8 | row i of a block lands in the result FIFO `K + 21 + i` cycles after its start (`mma_result_latency = 21`); a converter takes 2 cycles per row (`mma_cv_row_cycles`) and the writeback 2 cycles per row plain (`+3` accumulate: `W_OLD, W_OLD_WAIT, W_ADD` — phase 8 L3's eight adders add a row in two halves, `+2` before; `+4` masked add, `+4` masked mul); padding rows of the last row block cost the converter only: drain **57** plain on a full last block (`K + 21 + 2·16 + 4`), **105** accumulate |
+| drain / `mma_latency` | 8 | row i of a block lands in the result FIFO `K + 21 + i` cycles after its start (`mma_result_latency = 21`); a converter takes 2 cycles per row (`mma_cv_row_cycles`) and the writeback pipelines rows through its port (phase 8 K3): the next row's first operand read (the old accumulator, else the mask) goes out while the current row adds and the write cycle takes the next row, so rows that stream cost **2 cycles** plain and accumulate (read old n+1 ‖ add n, write n), 3 masked add / mul, 6 masked accumulate; a lone row 2 plain, 4 accumulate (take + read, return, add, write). L3: 5 per accumulated row (`W_OLD, W_OLD_WAIT, W_ADD, W_WRITE` from idle). Padding rows of the last row block cost the converter only: drain **57** plain on a full last block (`K + 21 + 2·16 + 4`), **59** accumulate (L3: 105) |
 | result FIFO | — | 32 rows: a block starts only when ≤ 16 committed rows wait (`mma_rf_rows = 32`) |
 | next MMA | may start when the array is free (the drain overlaps) | the queue holds the next instruction until DONE (+1 cycle); no overlap |
 | A from ACC | — | same cost as A from INP (two read ports per bank) |
@@ -129,20 +141,24 @@ family's loop; `rtl/README.md` §2).
 | instruction | RTL | calibrated model | planning model |
 |---|---|---|---|
 | MMA 64×128×128 (32 blocks, P 128) | 4284 | 4284 | 4104 |
-| MMA accumulate 64×128×128 | 4332 | 4332 | 4104 |
-| MMA, A from ACC, plain / accumulate | 4284 / 4332 | 4284 / 4332 | 4104 |
+| MMA accumulate 64×128×128 (L3: 4332) | 4286 | 4286 | 4104 |
+| MMA, A from ACC, plain / accumulate | 4284 / 4286 | 4284 / 4286 | 4104 |
+| MMA.MASKED add / mask-mul accumulate 64×128×128 (`mma_mask`; before K3: 4348 / 4892) | 4302 / 4350 | 4302 / 4350 | 4104 |
 | MMA 50×100×96 (GEMM: 24 blocks, P 100) | 2571 | 2571 | 2408 |
 | MMA.T 64×64×64 (FA QKᵀ: 16 blocks, P 64) | 1148 | 1148 | 1032 |
-| MMA accumulate 64×64×64 (FA PV) | 1436 | 1436 | 1032 |
+| MMA accumulate 64×64×64 (FA PV; L3: 1436) | 1150 | 1150 | 1032 |
 
 `_rtl_mma_cycles` replays the unit cycle by cycle (fill engines, block
 scheduler, FIFO, converter, writeback FSM) with the constants above and
 reproduces every measured shape exactly. The 64×128×128 product costs 132
 cycles more than phase 7's unit (the B fill of the first block, `K + 3`),
 GEMM 147 fewer (P = 100 instead of 112), FA's QKᵀ 68 more (`16·4` fill) and
-its PV accumulate 68 more: at P = 64 each block's 16 rows take 64 cycles to
-write back, so the FIFO rule (≤ 16 committed rows) lets a block start only
-every ~73 cycles (+14 %), as in phase 7, plus the first fill.
+its PV accumulate 70 more (the same fill plus the two-cycle writeback tail).
+Until K3 the PV accumulate cost 1436: at P = 64 each block's 16 rows took 80
+cycles to write back (5 per row), so the FIFO rule (≤ 16 committed rows) let
+a block start only every ~73 cycles (+14 %, phase 7's bound); with the
+row-pipelined writeback (2 per row, 32 of the 64) an accumulate is the plain
+product plus 2.
 
 ### 1.3 VEC / SFU (`vec_unit.sv`, `sfu.sv`)
 
@@ -150,10 +166,10 @@ every ~73 cycles (+14 %), as in phase 7, plus the first fill.
 |---|---|---|
 | elementwise op on an `[M, N]` tile | `⌈M·N/16⌉` | `M · ⌈N/16⌉` slices + **6** (`vec_op_overhead_cycles`; 5 for VFILL, 7 for VROWMAX/VROWSUM) |
 | op on a column vector `[M, 1]` (a 2-D VEC tile, erratum E2 / phase 8 K2) | `⌈M/16⌉` (4 for 64) | **`N · ⌈M/16⌉` column slices** (4 for `[64, 1]`): the pad's 2-D VEC slots are banked by row and an elementwise op whose tiles are all 2-D VEC tiles runs in column-slice order (VFILL and the SFU kinds one less). K1: **M** (64, one element per row) |
-| op with a row-vector operand (`vec=`, `VSCALE_ACC`) | same as without | **+1 per 16 rows** (the vector's column slice; K1: +1 per row); VEXP2.SUM +2 per 16 rows |
+| op with a row-vector operand (`vec=`, `VSCALE_ACC`) | same as without | **+1 per 16 rows** (the vector's column slice; K1: +1 per row); SFU kinds +2 per 16 rows (an issue slot and the return, `sfu_vec_read_cycles`; in column order +2 per slice), VEXP2.SUM +4 (its partial add holds the slice read a cycle longer) |
 | a 2-D VEC tile read in row order (VGATE / VSEL / VMASK with a VEC tile, VCOUNT on a 2-D slot) | one slice per 16 columns | **one cycle per element** (the pad's serial path): `lanes − 1` extra per slice; VCOUNT 1×8 measured 13 (rule: 14). No family program does this (KDA's gating tile would) |
-| SFU op (VEXP2, VRCP, VLOG2, VSIGMOID) | `⌈M·N/4⌉` (4 cycles per slice) | **6 cycles per slice** (`sfu_slice_cycles`: issue, return, 4 lane steps; one slice in flight), the row-vector read overlapped |
-| VEXP2.SUM | 3 passes unfused (12 per slice) | **fused, one pass**: 7 per slice + 3 per row (`sfu_fused_sub_sum = True`, `sfu_sum_slice_extra = 1`, `sfu_sum_row_extra = 1`: the partial add on the lane ALUs since K0.2) |
+| SFU op (VEXP2, VRCP, VLOG2, VSIGMOID; VGATE decay) | `⌈M·N/4⌉` (4 cycles per slice) | **4 cycles per slice** (`sfu_slice_cycles`; phase 8 K3: the next slice's read is issued two lane steps before the end and returns in the last step; K2: 6, one slice in flight) + 1 per instruction (`sfu_fill_cycles`); VGATE decay 6 per slice (its second operand read takes an issue slot and a return) |
+| VEXP2.SUM | 3 passes unfused (12 per slice) | **fused, one pass, 4 per slice** (`sfu_fused_sub_sum = True`; K3: `sfu_sum_slice_extra = 0`, `sfu_sum_row_extra = 0`, the partial add on the lane ALUs overlaps the next slice's steps; K2: 7 per slice + 3 per row) |
 | row reductions (VROWMAX, VROWSUM, VEXP2.SUM) | — | **+4 at the end** (`vec_reduce_extra`; VROWMAX / VROWSUM + 1 since K2: the last result's column-element write): the shared four-cycle reducer of K0.2 (8 adders, level 0 in the fire cycle); rows of ≥ 4 slices stream without a stall since the last slice is issued when the reducer frees by the time it returns |
 
 | instruction | RTL | calibrated | planning |
@@ -164,10 +180,16 @@ every ~73 cycles (+14 %), as in phase 7, plus the first fill.
 | VFILL 64×1 (K1: 69) | 9 | 9 | 4 |
 | VMAX / VADD / VSUB with a column-vector operand, 64×1 (K1: 134) | 14 | 14 | 4 |
 | VMUL imm / VCOPY 64×1 (K1: 70) | 10 | 10 | 4 |
-| VEXP2 64×1 (vec subtrahend) / VRCP 64×1 (K1: 389) | 29 | 29 | 16 |
-| VEXP2.SUM 64×64 (K1: 1994) | 1874 | 1874 | 3072 |
+| VEXP2 / VRCP 64×1 (K2: 29, K1: 389) | 23 | 23 | 16 |
+| VEXP2 64×1 with a column-vector subtrahend (sfu) | 31 | 31 | 32 |
+| VEXP2.SUM 64×64 (K2: 1874, K1: 1994) | 1052 | 1052 | 3072 |
 | VROWMAX / VMUL / VCVT / VFILL 64×64 | 267 / 262 / 262 / 261 | 267 / 262 / 262 / 261 | 256 |
 | VSCALE_ACC 64×64 (K1: 326) | 266 | 266 | 256 |
+| VEXP2 / VRCP 64×128 (sfu; 512 slices) | 2055 | 2055 | 2048 |
+| VLOG2 / VSIGMOID 64×64 (sfu) | 1031 | 1031 | 1024 |
+| VEXP2 64×64 with a column-vector subtrahend (sfu) | 1039 | 1039 | 2048 |
+| VEXP2.SUM 64×128 (sfu) | 2076 | 2076 | 6144 |
+| VGATE decay 64×64 (sfu; two reads per slice) | 1543 | 1543 | 256 |
 | VADD imm / VFILL on a `[1, 16]` 2-D VEC tile (loop; 16 column slices) | 22 / 21 (up to 31 under DMA contention) | 22 / 21 | 1 |
 | VCOUNT on a `[1, 8]` 2-D VEC tile (loop; serial read) | 13 | 14 | 1 |
 
@@ -223,8 +245,10 @@ array), COMM link values (not built).
   exercised by GEMM/FA beyond the 14 cycles above).
 - **Instruction-queue occupancy** is counted when a head is processed, one
   cycle coarser than the RTL's issue.
-- **Formulas from the FSMs, not from a run**: `VTOPK` (k passes), `VGATE`,
-  `VMASK`, `VSEL`. Phase 8 K5 (MoE/MLA/KDA on RTL) measures them. The
+- **Formulas from the FSMs, not from a run**: `VTOPK` (k passes), `VGATE`
+  mul / add, `VMASK`, `VSEL` (VGATE decay and the masked MMA forms are
+  measured since K3: the `sfu` and `mma_mask` programs). Phase 8 K5
+  (MoE/MLA/KDA on RTL) measures them. The
   gathers and the dequant formats are measured since K1 (§1.1, the `gather`
   program); the mixed-shape VEC kinds on a 2-D VEC tile (VGATE / VSEL /
   VMASK tile) take the pad's serial-path cost from the FSM (K2, §1.3).
@@ -244,7 +268,7 @@ array), COMM link values (not built).
 ## 3. How to reproduce
 
 ```
-make -C rtl/test all                      # the ten programs (neg_untokened with TOKEN_CHECK=1), writes rtl_trace.txt
+make -C rtl/test all                      # the twelve programs (neg_untokened with TOKEN_CHECK=1), writes rtl_trace.txt
 python rtl/test/calibrate.py              # per-instruction tables and the totals above
 python -m pytest tests/test_cycle.py -q   # planning rules on KV260_PLAN / CONFIG_C, the measured durations on KV260
 ```
@@ -269,9 +293,13 @@ reproduce; the calibrated descriptor is `tcta.timing.KV260`.
    than one column is one element per cycle (DMA LOAD / STORE of such
    tiles, VGATE / VSEL / VMASK with a VEC tile), and the pad's serial path
    plus the VEC unit's column mode cost 5.2 k LUT-eq.
-3. **The SFU is 6 cycles per slice, not 4**: one slice in flight through
-   the 4-lane pipe. Pipelining slices (the lanes are idle 2 of 6 cycles) is
-   a −33 % on every SFU op; VEXP2.SUM is 42 % of FA's VEC time on RTL.
+3. **The SFU was 6 cycles per slice, not 4** (one slice in flight through
+   the 4-lane pipe) — **fixed by K3**: the next slice's read is issued two
+   lane steps before the end, every SFU kind is 4 per slice (VEXP2.SUM 64×64
+   1874 → 1052), VGATE decay 6 (two operand reads). The MMA accumulate
+   writeback was 5 cycles per row and bound FA's PV at P = 64 (+14 %); K3
+   pipelines rows through the port (2 per row): PV 1436 → 1150, FA 26049 →
+   21593 (−17.1 %).
 4. **The front end is 3 cycles per word and queues PUSH/POP words**; with
    16-deep instruction queues it is never on GEMM's or FA's critical path
    (FA's front end finishes dispatching at cycle 36278 of 38543 only because

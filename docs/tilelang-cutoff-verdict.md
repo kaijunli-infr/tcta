@@ -1625,3 +1625,117 @@ duration test pins VSUB 522 and VROWMAX 523).
    until granted, which every client does, and the formal jobs assume
    nothing about it (the properties hold under arbitrary request
    sequences).
+
+## Verdict: K3 DONE — SFU 4 cycles per slice (was 6), MMA accumulate rows 2 cycles (was 5), FA −17.1 %, PV no longer writeback-bound
+
+| | K2 | K3 |
+|---|---|---|
+| SFU op per slice (VEXP2 / VRCP 64×128: 512 slices) | 6 (model) | **4**: 2055 = 7 + 512·4 |
+| VEXP2 / VRCP on `[64, 1]` | 29 | **23** (31 with a column-vector subtrahend) |
+| VEXP2.SUM 64×64 (FA) | 1874 | **1052** (−43.9 %); 64×128: 2076 |
+| VLOG2 / VSIGMOID 64×64; VEXP2 64×64 with a vector; VGATE decay 64×64 | unmeasured (model 1542 / 1542 / 518) | 1031 / 1039 / **1543** (decay: two operand reads, 6 per slice) |
+| MMA accumulate 64×64×64 (FA PV) | 1436 | **1150** (the plain MMA.T 1148) |
+| MMA accumulate 64×128×128 | 4332 | 4286 (plain 4284) |
+| MMA.MASKED add / mask-mul accumulate 64×128×128 | 4348 / 4892 | 4302 / 4350 |
+| FA (4 KV tiles) | 26049 | **21593 (−17.1 %)**; planning model 27856 (+29.0 %) |
+| mma program | 23230 | 23138 |
+| 8×8 array (`TCTA_MAC8`): MMA 64×128×128 plain / accumulate | 16547 / 16563 | 16540 / 16549 |
+| `vec_unit` / `mma_unit` (Yosys, own LUT-eq) | 21 340 / 26 023 | 21 174 / 26 948 |
+| core | 167 699 LUT-eq (143 % of the K26) | 168 458 (144 %, +759) |
+
+- **SFU slices in flight** (`vec_unit.sv`): the sequencer issues the next
+  slice's read once the stepping slice is within two lane steps of its end
+  (`sfu_can_take`), so the read returns in the last step at the earliest,
+  when that step's lanes go straight into the write and the returning slice
+  loads behind it; the pipe therefore costs the 4 lane steps per slice and
+  one return cycle per instruction. Three hazards closed on the way: the
+  sigmoid chain's use of lanes 0–3 (x · −log2 e, 1 + u) is now gated on the
+  kind, so a returning VEXP2 slice's `x − vec[r]` and VEXP2.SUM's partial add
+  keep the adders; VEXP2.SUM's partial add (the cycle after the last step,
+  on all 16 adders) must not coincide with a return, so its last step does
+  not grant and `!exp_sum_pending` still gates the issue; and the partial add
+  keeps its own tag (`sum_tag`) since `sfu_tag` already names the next
+  slice. The write FIFO reserves a slot for the stepping slice and the
+  issued one. VGATE decay's second operand read (gate then acc) cannot
+  overlap the steps — one read in flight — so it costs 6 per slice.
+- **Writeback pipelined through its port** (`mma_unit.sv`), per the L1–L4
+  verdict's finding 4 (whole rows, the 8 adders and the 8-lane converter
+  kept): a row's first operand read — the old accumulator when accumulating,
+  else the mask — is prefetched for the row still at the converter output
+  (its descriptors are known one cycle before `cv_v`, in the previous row's
+  `W_ADD`) while the current row adds (`W_MCALC`, `W_MCALC2`, `W_ADD`: the
+  port is free and no read is outstanding), and the write cycle takes the
+  next row. Every read lands in one 512-FF register (`pf_d`); a row's old
+  value is copied to `old_d` for the second add half (in `W_ADD`) or before
+  the mask read overwrites `pf_d` (in `W_MASK`), its mask to `mask_d` for the
+  second mask half. Order per row: old, mask, mask op, add, write; from idle
+  the first read goes out with the take. Streaming rows cost 2 cycles plain
+  and accumulate (read old n+1 ‖ add n, write n), 3 masked, 6 masked
+  accumulate (L3: 2 / 5 / 6 / 8); a lone accumulated row 4 (was 5). At P =
+  64 the accumulate's 16 rows now take 32 of the 64 cycles: FA's PV is the
+  plain product plus 2.
+- **Harness**: two programs join `make all` (12/12): `mma_mask` (MMA.MASKED
+  add, mask-mul accumulate; bit-exact — no family program emits MMA.MASKED
+  and the masked path was unexercised) and `sfu` (VEXP2 / VRCP / VEXP2.SUM
+  vec on 64×128, VLOG2 / VSIGMOID / VEXP2 vec / VGATE decay on 64×64, VEXP2
+  vec on `[64, 1]`: every SFU kind in row order plus the column-order vector
+  case, checked by a new `f32tol` row-relative check at 2⁻¹⁰ against the
+  simulator; measured ≤ 8e-5 — a first version chained exp2 through a
+  row-sum argument of 77 and failed at 2.8e-3, error propagation, not the
+  pipe). `calibrate.py` runs them by default.
+- **Cycle model**: `sfu_slice_cycles` 6 → 4, `sfu_fill_cycles` 1 (the first
+  return), `sfu_vec_read_cycles` 2 (an issue slot and a return per vector or
+  second operand read; VEXP2.SUM's vector read 4), `sfu_sum_slice_extra` and
+  `sfu_sum_row_extra` 0; VGATE decay is an SFU kind with two reads. The MMA
+  replay drops the four `mma_wb_*` constants and replays the writeback FSM
+  state by state (prefetch, landing register, take in the write cycle); it
+  reproduces every MMA row — plain, accumulate, masked add, masked
+  accumulate, A from ACC, the FA shapes, and the 8×8 build's 16540 / 16549
+  (`KV260_L5` re-measured with `make run PROG=mma MAC8=1`). Every SFU row of
+  `sfu` and `fa` is exact.
+- **Cost**: `mma_unit` +925 LUT-eq (the landing register's 512 FFs, the
+  adder-input muxes that pick `pf_d` or the copy, the request-descriptor
+  mux between the converter's and the writeback's row), `vec_unit` −166 (the
+  kind-gated sigmoid chain). Core 167 699 → 168 458 LUT-eq (144 % of the
+  K26). The scratchpad is untouched.
+
+Checks: lint clean; `make -C rtl/test all` 12/12 PASS (also `FORMAL=1`: the
+pad's arbiter properties as runtime assertions under the new MMA read
+pattern; the two sby jobs are unaffected, `scratchpad.sv` did not change);
+`calibrate.py`: every MMA and SFU row exact, totals within 0.1 % except
+`loop` (−7.4 %, K2's port-contention gap) and `sfu` (+0.2 %: a 64×1 f32 LOAD
+into a 2-D VEC slot, 251 vs 288); `pytest tests -q` 96 passed (the duration
+tests pin MMA accumulate 4286 and the 8×8 build's 16540 / 16549).
+
+## Findings for the main session
+
+1. **FA's bound moved**: with the PV accumulate at the plain product's cost
+   and the SFU at 4 per slice, FA is 21593 cycles for 4 KV tiles: the MMAs
+   are 9.2 k (43 %), the per-tile VEC chain 9.6 k (45 %: VEXP2.SUM 4.2 k,
+   VSCALE_ACC 1.3 k, VROWMAX 1.1 k, VCVT 1.0 k, VMUL 1.0 k), the loads
+   2.5 k. The next VEC lever is the chain itself (fusing the `VSUB vec →
+   VMUL → VEXP2.SUM` and `VSCALE_ACC → VCVT` pairs would be K6 territory),
+   not the SFU.
+2. **The planning descriptor is now 29 % over FA**: `KV260_PLAN`'s unfused
+   SFU rule (three passes, 3072 per VEXP2.SUM 64×64 against 1052) is the
+   slow one, after K1–K3 made the DMA, the vectors and the SFU the planned
+   machine. K7 should re-derive the planning VEC / SFU rules from the K3
+   structure (`sfu_fused_sub_sum`, 4 per slice) so the planning and
+   calibrated models meet on FA as they do on GEMM (−4.8 %).
+3. **VGATE decay costs 6 per slice, not 4**: its gate and accumulator reads
+   are issued one at a time (the tag queue allows one SFU read in flight).
+   KDA's gating is this kind; allowing two reads in flight for the two-operand
+   SFU kind is a small sequencer change (K8 list) if K5 shows KDA caring.
+4. **Masked accumulate rows cost 6 cycles** (old read, mask read, two mask
+   halves, add, write): at P ≤ 96 a masked accumulate would be
+   writeback-bound again. No family program uses `MMA.MASKED` with
+   accumulate (MLA / KDA mask with VGATE); if one appears, the mask read can
+   be prefetched too (a second landing register, ≈ 0.5 k).
+5. **A DMA model gap surfaced by `sfu`**: a 64×1 f32 LOAD into a 2-D VEC slot
+   is 251 cycles against the rule's 288 — the K1 rows-in-flight bound
+   (a row holds its record for latency + fetch + write) over-charges
+   one-column rows by ~0.5 cycle per row. Not K3's; noted for K7.
+6. **The prefetch assumes a one-cycle pad response** for its 2-cycle rhythm;
+   a slower response (the VEC pad's serial path, were an accumulator ever a
+   2-D VEC tile) only lengthens the row (`W_OLD_WAIT` / `W_MASK_WAIT` wait
+   for it), never corrupts it: the taken row owns the outstanding read.

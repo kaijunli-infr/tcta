@@ -113,6 +113,21 @@ def main(d):
                             print(f"    {a:#x}: sim {w4} rtl {g4}")
                 else:
                     print(f"  DRAM: {len(exp['pages'])} pages bit-exact")
+            elif c["kind"] == "f32tol":
+                # an f32 region against the simulator's, to a row-relative tolerance (SFU paths are table-based)
+                rows, cols, stride = c["rows"], c["cols"], c["stride"]
+                def grab(pages):
+                    raw = bytearray()
+                    for pg in range(c["addr"] // PAGE * PAGE, c["addr"] + rows * stride, PAGE):
+                        raw += pages.get(pg, bytes(PAGE))
+                    off = c["addr"] % PAGE
+                    a = np.frombuffer(bytes(raw[off: off + rows * stride]), np.uint8).reshape(rows, stride)[:, :cols * 4].copy()
+                    return a.view(np.float32)
+                out, ref = grab(got), grab(want)
+                err = rowmax_err(out, ref)
+                good = bool(np.isfinite(out).all()) and err <= c["tol"]
+                print(f"  {c.get('name', 'f32')} err: rtl vs sim {err:.3e} tol {c['tol']:.3e} -> {'PASS' if good else 'FAIL'}")
+                if not good: ok = False
             elif c["kind"] == "rowmax":
                 ref = np.load(os.path.join(d, c["ref"]))
                 rows, cols = c["rows"], c["cols"]

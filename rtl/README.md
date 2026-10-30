@@ -151,13 +151,15 @@ finishes at `T + K + 5 + i + j` and a one-hot collector per lane writes
 `{flags, 57-bit sum}` into the FIFO (row i lands `K + 21 + i` cycles after
 the block start). A converter (8 `fix_to_f32` lanes, 2 cycles per row)
 rounds each row once to binary32 with the block's exponent maxima; the
-writeback FSM takes one converted row at a time: mask (`MMA.MASKED`: a mask
-slice read, then two add or multiply cycles on 8 adders / 8 multipliers),
-`+ old` (accumulate: a read of the destination slice, then the add in two
-lane halves, 3 more cycles), the write — 2 cycles per row plain, 5
-accumulate, 6 masked add, 6 masked mul (phase 8 L3: 8 adders instead of
-16, +1 cycle on accumulate and masked add);
-padding rows of the last row block cost the converter only. `wide` and
+writeback FSM pipelines rows through its scratchpad port (phase 8 K3): per
+row, in order, the old accumulator read (accumulate), the mask read and two
+mask add / multiply cycles on 8 adders / 8 multipliers (`MMA.MASKED`), the
+old + result add in two lane halves (the second straight into the write
+data), the write. The next row's first read (old, else mask) is prefetched
+into a landing register while the current row adds, and the write cycle
+takes the next row, so streaming rows cost 2 cycles plain and accumulate,
+3 masked add / mul, 6 masked accumulate (L3: 5 per accumulated row from
+idle); padding rows of the last row block cost the converter only. `wide` and
 `row0` are address arithmetic there; A from ACC reads the BF16 payload
 written by `VCVT` in place. Faults: K = 0, K > 128 or a bad scratchpad
 BAD_SHAPE, a bad mask mode BAD_QUALIFIER. `docs/calibration-report.md` §1.2
@@ -172,9 +174,12 @@ operand returns (binary32 RNE, the simulator's operand orders). A column
 vector of M elements is M slices (one element per row), a row-vector operand
 one read per row; per instruction ~6 cycles of setup, drain and metadata.
 SFU ops (`VEXP2[.SUM] [vec]`, `VRCP`, `VLOG2`, `VSIGMOID`, `VGATE decay`)
-hold one slice and pass it through `SFU_LANES` lanes in `L / SFU_LANES`
-steps (6 cycles per slice; `VEXP2.SUM` is one fused pass: subtract, exp2,
-running sum, 7 per slice + 2 per row). Reductions (`VROWMAX`, `VROWSUM`)
+pass a slice through `SFU_LANES` lanes in `L / SFU_LANES` steps and issue the
+next slice's read two steps before the end so that it returns in the last
+step (phase 8 K3: 4 cycles per slice, 6 for `VGATE decay`'s two operand
+reads; K2: 6, one slice in flight); `VEXP2.SUM` is one fused pass (subtract,
+exp2, running sum, also 4 per slice, the partial add on the lane adders
+overlapping the next slice's steps). Reductions (`VROWMAX`, `VROWSUM`)
 keep 16 lane partials and add them as a binary tree (E1). `VTOPK` is k
 selection passes over one row (stable), `VCOUNT` a counting pass that writes
 a front-end register, `VSEL`, `VMASK causal/band/tile`, `VFILL imm`, `VCVT`
@@ -239,7 +244,7 @@ simulator-only.
 
 ## 4. Testbench
 
-`test/README.md`: the ten programs (six positive, the front-end
+`test/README.md`: the twelve programs (eight positive, the front-end
 micro-test, three negative), the vector directory, the memory model, the
 trace format (`cycle queue SYNC|ISSUE|DONE op pc`, `cycle FE DISP op pc`),
 `compare.py`'s checks and `calibrate.py`. `make -C rtl/test all` runs
