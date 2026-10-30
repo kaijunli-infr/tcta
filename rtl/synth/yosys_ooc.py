@@ -218,7 +218,10 @@ def main() -> int:
     ap.add_argument("--out", default=str(ROOT / "rtl" / "synth" / "ooc"))
     ap.add_argument("--keep", action="store_true", help="keep the generated stub files")
     ap.add_argument("--only", nargs="*", help="run only these jobs (reuse existing json for the rest)")
+    ap.add_argument("--define", nargs="*", default=[], help="extra `define names (e.g. TCTA_MAC8 for the 8 x 8 array)")
+    ap.add_argument("--md", default=str(ROOT / "rtl" / "synth" / "yosys_xck26_estimate.md"), help="the report to write")
     a = ap.parse_args()
+    DEFINES.extend(a.define)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     headers = module_headers()
@@ -334,7 +337,7 @@ def main() -> int:
               "  separately and are not in the LUT column; LUT-eq adds them as LUT6 (RAM32M16 = 8, RAM32M = 4, ...).",
               "- Budget: K26 SOM (XCK26-SFVC784-2LV-C) 117 120 LUT6, 234 240 FF, 1 248 DSP48E2, 144 RAMB36 (5.1 Mbit),",
               "  64 URAM288 (unused by this flow). No timing: Fmax needs the Vivado run (vivado_ooc.tcl)."]
-    md = ROOT / "rtl" / "synth" / "yosys_xck26_estimate.md"
+    md = Path(a.md)
     md.write_text("\n".join(lines) + "\n")
     print("\n".join(lines[:16]))
     print(f"\nwritten {md}")

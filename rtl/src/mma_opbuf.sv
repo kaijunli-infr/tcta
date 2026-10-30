@@ -32,7 +32,7 @@ module mma_opbuf
   logic [LW-1:0] perm;
   logic [15:0] v [LANES];                        // v[x] = w_data[x ^ perm]
   always_comb begin
-    perm = (SCATTER && w_scatter) ? w_lane : w_row[LW-1:0];
+    perm = (SCATTER && w_scatter) ? w_lane : LW'(w_row);
     for (int x = 0; x < LANES; x++) v[x] = SCATTER ? w_data[x ^ int'({{(32-LW){1'b0}}, perm})] : w_data[x];
   end
   for (genvar r = 0; r < ROWS; r++) begin : g_row

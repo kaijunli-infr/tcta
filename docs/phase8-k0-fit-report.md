@@ -75,7 +75,7 @@ Nothing below was built; the estimates are structural (cells × count).
 | L3 MMA writeback: 8 adders over two cycles for the accumulate / mask add (−5 k), 4 converter lanes (−2.5 k) | −7.5 k | +1 cycle per accumulated row; +2 per row when P < 64 | implementation |
 | L4 operand buffers in RAMB18 | −8 k | 16 RAMB18 | implementation |
 | **L1–L4 together** | **−43 k → ~165 k (141 % of budget, 166 % of fit budget)** | | |
-| L5 8×8 array (the amendment's fallback): 64 cells, 8-lane collectors, half the operand buffers | −35 k → ~130 k | ¼ of the MACs (MMA 64×128×128 4 284 → ~16 500 cycles); **not a parameter change today**: `BANKS = MAC_COLS = VEC_LANES = 16` (`tcta_pkg.sv`, one row slice per access), so the writeback needs half-slice byte enables and the B buffer 8 lanes (1–2 days) | architecture |
+| L5 8×8 array (the amendment's fallback): 64 cells, 8-lane collectors, half the operand buffers | −35 k → ~130 k (**measured 2026-10-29: −17.4 k → 145 k**, §4c) | ¼ of the MACs (MMA 64×128×128 4 284 → ~16 500 cycles); **not a parameter change today**: `BANKS = MAC_COLS = VEC_LANES = 16` (`tcta_pkg.sv`, one row slice per access), so the writeback needs half-slice byte enables and the B buffer 8 lanes (1–2 days) | architecture |
 | L6 8 VEC lanes (two cycles per slice) | −12 k → ~118 k | VEC chain 2×; FA's per-tile VEC chain 4.6 k → ~8 k cycles | architecture |
 | L7 Vivado instead of Yosys: `-nowidelut` (no MUXF7/F8), no cross-module constant propagation, no LUT combining; mux-heavy logic typically maps 20–35 % smaller | −25 % | the x86 run | measurement |
 
@@ -164,3 +164,49 @@ leaves ≥ 32 RAMB36 spare; then it buys ≈ 3–4 k LUT-eq, not 8 k.
 export PATH=~/.local/opt/oss-cad-suite/bin:$PATH
 python3 rtl/synth/yosys_ooc.py -j 2          # ~20 min on the aarch64 box; per-module JSON in rtl/synth/ooc/
 ```
+
+## 4c. L5 (the 8×8 array on the 16-lane core): measured, kept as a build option (2026-10-29)
+
+Requested by the main session before the Vivado run. `TCTA_MAC8` (`tcta_pkg.sv`)
+sets `MAC_ROWS = MAC_COLS = 8` with `BANKS = 16`: a block covers half a slice,
+so the B fill takes lanes `j0 % 16 .. +7` of each WGT slice, the converter
+places a result row at those banks in one pass, the writeback works on one
+adder half (no second mask pass, old + result straight into the write) with
+the half's bank enables, the result FIFO holds two blocks (16 rows), blocks
+start every `max(K, 8)` cycles. `make all MAC8=1`: 10/10 PASS bit-exact;
+`calibrate.py --timing=KV260_L5` reproduces every MMA shape exactly.
+
+| | 16×16 (K1 state) | 8×8 (`TCTA_MAC8`) | delta |
+|---|---|---|---|
+| `mma_unit` own (controllers, prep, collectors, FIFO, converter, writeback) | 26 023 LUT-eq | 14 917 | −11 106 |
+| operand buffers (B scatter + A wide) | 6 588 + 4 372 | 3 771 + 2 194 | −4 995 |
+| cells (7 LUT + 2 DSP each) | 256 × 7 = 1 792 LUT, 512 DSP | 64 × 7 = 448, 128 DSP | −1 344 LUT, −384 DSP |
+| `mma_unit` total | 53 199 LUT-eq, 537 DSP, 29 820 FF | 35 754, 153 DSP, 11 422 FF | **−17 445 (−33 %)** |
+| core | 162 496 LUT-eq (139 % of the K26) | **145 051 (124 %)** | −10.7 % |
+| MMA 64×128×128 | 4 284 cycles | 16 547 | 3.9× |
+| MMA 64×64×64 (FA, acc / .T) | 1 436 / 1 148 | 4 211 / 4 163 | 2.9× / 3.6× |
+| GEMM 50×100·100×96 program | 5 917 | 11 875 | +101 % |
+| FA program (4 KV tiles) | 32 109 | 55 269 | +72 % |
+| mma / vec / gather programs | 23 230 / 14 910 / 22 683 | 72 218 / 27 173 / 48 404 | |
+
+The K0 estimate (−35 k) was twice the measurement: the array's cells are
+DSP-based (7 LUTs each, 1.8 k in all), so three quarters of them are worth
+1.3 k LUTs, and what the smaller array removes is its lane- and
+row-proportional control (collectors, row and column controllers, operand
+preparation, the FIFO lanes: −11.1 k) and half of the operand buffers
+(−5.0 k). The 109 k of the core outside `mma_unit` (VEC 53.6 k, DMA 29.8 k,
+pads 14.5 k) is sized by `BANKS = 16` and does not move. The array runs at
+full occupancy under the 8×8 build (blocks back to back at `K` cycles, the B
+fill at `K` per block), so the cycle cost is the MAC count and nothing
+structural.
+
+**Fallback statement, measured.** On the Yosys numbers the 16-lane core
+(162.5 k) fits the 99.5 k budget only if Vivado maps ≥ 39 % under Yosys,
+the 8×8 array on the 16-lane core (145.1 k) only if ≥ 31 %; both are at or
+beyond the usual 20–35 % gain, and L5 buys its 10.7 % with FA +72 % and
+GEMM +101 %. The 8-lane configuration (`BANKS = 8`, ≈ 80 k by the §4
+arithmetic) remains the only Yosys-backed fit, and the task's §0.3 rule
+stands: 16-lane core if Vivado ≤ 99.5 k, otherwise the 8-lane configuration
+for the KV260 build; the 8×8 array alone is not a middle ground worth its
+speed. `TCTA_MAC8` stays in the tree as a build option (default off) for the
+Vivado run to measure both arrays in one pass.

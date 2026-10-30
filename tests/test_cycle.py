@@ -23,7 +23,7 @@ from tcta import ACC, INP, VEC, WGT, DeviceConfig, Machine, Program, Q, Region  
 from tcta import dtypes as dt  # noqa: E402
 from tcta.cycle import CycleDeadlock, CycleMachine  # noqa: E402
 from tcta.isa import SP  # noqa: E402
-from tcta.timing import CONFIG_C, KV260, KV260_PLAN  # noqa: E402
+from tcta.timing import CONFIG_C, KV260, KV260_L5, KV260_PLAN  # noqa: E402
 
 rng = np.random.default_rng(0)
 
@@ -426,3 +426,28 @@ def test_kv260_calibrated_reproduces_rtl_durations():
     assert dur[6][1] == 2126
     # the front end: 3 cycles per word (PUSH / POP words too), the first LOAD dispatched at cycle 3
     assert t.recs[0].dispatch == 3
+
+
+def test_kv260_l5_reproduces_the_8x8_array():
+    """Phase 8 L5: the same program on the 8 x 8 array build (`make all MAC8=1`, rtl `TCTA_MAC8`), the two MMAs
+    measured on the RTL trace at 16547 (plain) and 16563 (accumulate) cycles; the DMA and VEC rows do not move."""
+    m = CycleMachine(timing=KV260_L5)
+    A = np.random.default_rng(1).standard_normal((64, 128)).astype(np.float32)
+    B = np.random.default_rng(2).standard_normal((128, 128)).astype(np.float32)
+    m.dram_write(0, (dt.to_bf16(A).view(np.uint32) >> 16).astype(np.uint16))
+    m.dram_write(1 << 16, (dt.to_bf16(B).view(np.uint32) >> 16).astype(np.uint16))
+    ra = Region(0, "bf16", (64, 128), (256, 2)); rb = Region(1 << 16, "bf16", (128, 128), (256, 2))
+    ro = Region(1 << 20, "f32", (64, 128), (512, 4))
+    p = Program()
+    p.load2d(INP(0), ra, 64, 128); p.push(Q.LOAD, Q.MMA)
+    p.load2d(WGT(0), rb, 128, 128); p.push(Q.LOAD, Q.MMA)
+    p.pop(Q.MMA, Q.LOAD); p.pop(Q.MMA, Q.LOAD)
+    p.mma(ACC(0), INP(0), WGT(0)); p.mma(ACC(0), INP(0), WGT(0), accumulate=True); p.push(Q.MMA, Q.VEC)
+    p.pop(Q.VEC, Q.MMA); p.vrowmax(VEC(0), ACC(0)); p.vsub(ACC(0), vec=VEC(0)); p.push(Q.VEC, Q.STORE)
+    p.pop(Q.STORE, Q.VEC); p.store2d(ACC(0), ro, 64, 128)
+    p.finish()
+    st = m.run(p.instrs)
+    assert st["ok"]
+    dur = [(r.op, r.end - r.start) for r in sorted(m.timing_report.recs, key=lambda r: r.start)]
+    assert dur[2] == ("MMA", 16547) and dur[3] == ("MMA", 16563)
+    assert dur[0][1] == 1127 and dur[1][1] == 2215 and dur[6][1] == 2126

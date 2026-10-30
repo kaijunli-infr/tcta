@@ -33,7 +33,7 @@ rtl/
 | `N_INP, N_WGT, N_ACC, N_VEC, N_STATE` | 2, 4, 6, 16, 1 | 5, 32, 16, 64, 2 | slots (ACC: 2 + one wide = 6 indices) |
 | `VEC_ROW_SLOT0` | 8 | 32 | VEC slots ≥ this are row tiles `[1, T_VR]` |
 | `FIFO_DEPTH` | 8 | 8 | tokens per edge |
-| `MAC_ROWS, MAC_COLS` | 16, 16 | 64, 64 | systolic array |
+| `MAC_ROWS, MAC_COLS` | 16, 16 (8, 8 under `TCTA_MAC8`: `make all MAC8=1`, the phase 8 L5 measurement; a block then covers half a slice) | 64, 64 | systolic array |
 | `VEC_LANES, SFU_LANES` | 16, 4 | 64, 16 | VEC pipe width, SFU pipe width |
 | `BANKS` | 16 | 64 | column banks per scratchpad (= MAC_COLS = VEC_LANES) |
 | `DMA_BYTES` | 16 | 32 | bytes per beat on the memory port |

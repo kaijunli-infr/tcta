@@ -518,8 +518,8 @@ def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, m
       halves, the B fill one block's columns (K cycles for MMA, 16 * n_cg for MMA.T); both run back to back
       while a free half exists (a half is free once its block has streamed it: K + 20 cycles after the start).
       A half is ready mma_fill_ready_latency (2) cycles after its last read.
-    * blocks (row-block major) start every P = max(K, 16) cycles when both halves are ready and the result FIFO
-      holds at most mma_rf_rows - 16 committed rows.
+    * blocks (row-block major) start every P = max(K, mac_rows) cycles when both halves are ready and the result
+      FIFO holds at most mma_rf_rows - mac_rows committed rows.
     * a block's row i lands in the result FIFO K + mma_result_latency + i cycles after its start; the converter
       takes a row per mma_cv_row_cycles and hands it to the writeback, which costs mma_wb_row_cycles per row (+ extras for
       accumulate / masked add / masked mul); padding rows of the last row block cost the converter only.
@@ -527,7 +527,7 @@ def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, m
     """
     R, C = T.mac_rows, T.mac_cols
     HALVES = 4
-    P = max(16, K)
+    P = max(R, K)
     n_cg = -(-K // 16)
     nbi, nbj = -(-M // R), -(-N // C)
     nb = nbi * nbj

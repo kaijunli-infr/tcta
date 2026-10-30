@@ -1442,3 +1442,79 @@ proof is untouched by K1 (no scratchpad change).
    around a difference of narrow counters (`int'(a − b)`) silently widens
    the operands. Both engines now size the difference first; the pattern
    does not occur elsewhere in `rtl/src` (grep `int'(` over subtractions).
+
+# Phase 8 L5 (the 8×8 array on the 16-lane core): measurement (2026-10-29)
+
+Requested by the main session with the K1 go: "measure L5 (the 8×8 array on
+the 16-lane core) before the Vivado run". Built as a define (`TCTA_MAC8`,
+default off: the 16×16 array stays the planning machine), measured under
+Yosys and on the harness, modelled in `tcta.timing.KV260_L5`; the K0 fit
+report gains §4c.
+
+## Verdict: L5 saves 17.4 k LUT-eq (−10.7 %), not 35 k, for FA +72 % and GEMM +101 % — not a middle ground
+
+| | 16×16 | 8×8 |
+|---|---|---|
+| `mma_unit` | 53 199 LUT-eq, 537 DSP | 35 754, 153 DSP (−17 445) |
+| core | 162 496 LUT-eq (139 % of the K26) | **145 051 (124 %)** |
+| Vivado gain needed for the 99.5 k budget | 39 % | 31 % |
+| MMA 64×128×128 | 4 284 | 16 547 |
+| GEMM / FA programs | 5 917 / 32 109 | 11 875 (+101 %) / 55 269 (+72 %) |
+
+- **What changed** (`rtl/src/mma_unit.sv`, `tcta_pkg.sv`, `mma_opbuf.sv`):
+  with `MAC_COLS = 8` and `BANKS = 16` a block covers half a slice. The B
+  fill takes lanes `j0 % 16 .. +7` of each WGT slice (registered offset
+  alongside the fill pipeline; the exponent maxima follow it), the
+  converter is one pass that places the row at those banks, the writeback
+  works on the adder half the row sits in (one mask pass; old + result
+  straight into the write data: 4 cycles per accumulated row instead of 5)
+  and writes it with the half's bank enables; the result FIFO holds two
+  blocks (`2 · MAC_ROWS` rows), blocks start every `max(K, MAC_ROWS)`
+  cycles; the lane and row indices are sized from the parameters. The
+  16×16 build is unchanged (identical traces, lint clean in both builds).
+- **Measured**: `make all MAC8=1` 10/10 PASS bit-exact (the fixed-point
+  window is per row and per column of the product, not per block, so the
+  array size cannot change a result); `rtl/synth/yosys_xck26_estimate_mac8.md`
+  (`yosys_ooc.py --define TCTA_MAC8 --out rtl/synth/ooc_mac8 --md …`, only
+  `mma_unit` and the two operand buffers re-synthesised). `calibrate.py
+  --timing=KV260_L5` reproduces every MMA shape of mma / gemm / fa / vec
+  exactly and the program totals within 0.0 %; `KV260_L5` differs from
+  `KV260` only in `mac_rows/cols` 8, `mma_rf_rows` 16,
+  `mma_cv_row_cycles` 1, `mma_wb_acc_extra` 2, `mma_wb_mask_extra` 3,
+  `mma_wb_mask_mul_extra` 3, `mma_release_latency` 12, `mma_result_latency`
+  13 (= K + MAC_ROWS + 4, K + MAC_COLS + 5; the model's block period is now
+  `max(K, mac_rows)`).
+- **Why half the estimate**: the cells are DSP-based (7 LUTs each), so the
+  192 removed cells are 1.3 k LUTs; the saving is the array's control
+  (−11.1 k) and half the operand buffers (−5.0 k). Everything else
+  lane-proportional (VEC 53.6 k, DMA 29.8 k, pads 14.5 k) is sized by
+  `BANKS` and stays. The 8×8 array runs at full occupancy (blocks back to
+  back at `K` cycles), so the 3–4× MMA cost is the MAC count, not a
+  structural loss; the family programs grow less (FA +72 %, GEMM +101 %)
+  because their DMA and VEC parts do not change.
+
+Checks: lint clean (16×16 and 8×8); default `make run PROG=mma` identical
+trace; `make all MAC8=1` 10/10 PASS; the committed vector traces are the
+16-lane ones (the 8×8 traces were restored after the measurement); `pytest
+tests -q` 96 passed (a new test pins the 8×8 program totals to `KV260_L5`).
+
+## Findings for the main session
+
+1. **L5 is not a fit lever worth its speed**: −10.7 % of the core for FA
+   +72 % and GEMM +101 %. It moves the Vivado requirement from 39 % to 31 %,
+   both at or beyond the usual 20–35 % gain. The §0.3 rule stands as
+   written: the 16-lane core if Vivado ≤ 99.5 k, otherwise the 8-lane
+   configuration (`BANKS = 8`, ≈ 80 k, fits by Yosys alone). The define
+   stays in the tree so the Vivado run can report both arrays.
+2. **The array is cheap, the lanes are not.** `mma_unit`'s 256 cells are
+   1.8 k LUTs + 512 DSPs; its 53 k is control, buffers and the writeback.
+   The 109 k outside it scales with `BANKS`: the lane width is the fit
+   decision, as the K0 report said, and the measurement now backs it.
+3. **The 8×8 B fill reads each WGT slice twice** (both column halves of a
+   slice are separate blocks). It costs nothing today (fill = block period =
+   `K`) but would under a two-array or wider-slice variant; filling both
+   halves per read is a one-cycle change to the fill engine if L5 is ever
+   taken.
+4. **DSP budget**: the 8×8 build uses 238 of 1 248 DSP48E2 (19 %), the 16×16
+   622 (50 %). Neither is the constraint; block RAM (192 RAMB36 for 144,
+   L4's finding) still is for both.

@@ -11,7 +11,7 @@ Units: one cycle = one clock at `f_mhz`. The cycle model reports cycles and micr
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .isa import SP, Q
 
@@ -102,7 +102,7 @@ class DeviceTiming:
     #   MMA (rtl/src/mma_unit.sv, replayed cycle by cycle in cycle._rtl_mma_cycles): mma_setup_cycles from issue to
     #   the run state; operand fills of 16 * ceil16(K) / 16 cycles per A row block and K (MMA) or 16 * n_cg (MMA.T)
     #   per B block into four buffer halves, a half ready mma_fill_ready_latency after its last read and free again
-    #   K + mma_release_latency after the last block start that used it; blocks start every P = max(K, 16) cycles
+    #   K + mma_release_latency after the last block start that used it; blocks start every P = max(K, mac_rows) cycles
     #   while the result FIFO (mma_rf_rows) has room for a block; a block's row i lands in the FIFO K +
     #   mma_result_latency + i cycles after its start; the converter takes mma_cv_row_cycles per row and the writeback
     #   mma_wb_row_cycles (+ extras for accumulate / masked add / masked mul; padding rows cost the converter only).
@@ -187,6 +187,14 @@ KV260 = DeviceTiming(
     banks={SP.INP: 1, SP.WGT: 1, SP.ACC: 1, SP.VEC: 1, SP.STATE: 1},
     ports_per_bank=(2, 1),
 )
+
+# Phase 8 L5 measurement: the same core with the 8 x 8 MAC array (rtl `TCTA_MAC8`, `make all MAC8=1`). Blocks start every
+# max(K, 8) cycles, the result FIFO holds 16 rows, a result row converts in one pass and the writeback works on one
+# adder half (no second mask pass, old + result straight into the write); the fill, release and result latencies
+# follow the array size (K + MAC_ROWS + 4, K + MAC_COLS + 5).
+KV260_L5 = replace(KV260, name="v1-kv260-mac8", mac_rows=8, mac_cols=8,
+                   mma_release_latency=12, mma_result_latency=13, mma_cv_row_cycles=1,
+                   mma_wb_acc_extra=2, mma_wb_mask_extra=3, mma_wb_mask_mul_extra=3, mma_rf_rows=16)
 
 # Config C after ISA v0.1.4 §11 (planning rules, not calibrated): FIFO 8, request striping 2, operand broadcast, WGT 32 slots (one bank each),
 # outstanding window 512 >= a striped gather's demand (one request per cycle x (latency + transfer) ~ 302).

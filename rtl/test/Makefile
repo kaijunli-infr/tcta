@@ -3,14 +3,16 @@
 #   make run PROG=gemm         # run one vector directory and compare against the simulator's expectations
 #   make all                   # every program (neg_untokened with TOKEN_CHECK=1)
 #   make all FORMAL=1          # the same with the formal properties compiled as runtime assertions (J6 fallback)
+#   make all MAC8=1            # the same on the 8 x 8 MAC array (TCTA_MAC8; phase 8 L5 measurement)
 #   make lint                  # verilator --lint-only on the core
 VERILATOR ?= verilator
 PYTHON    ?= $(HOME)/Projects/tilelang-cutoff/.venv/bin/python
 SRC_DIR   := ../src
 TOKEN_CHECK ?= 0
 FORMAL    ?= 0          # 1: compile the `ifdef FORMAL properties (token_fifo, bank arbiter) as runtime assertions
+MAC8      ?= 0          # 1: the 8 x 8 MAC array on the 16-lane core (TCTA_MAC8, phase 8 L5 measurement)
 MEMLAT    ?= 24
-OBJ       := obj_dir_tc$(TOKEN_CHECK)$(if $(filter 1,$(FORMAL)),_formal,)
+OBJ       := obj_dir_tc$(TOKEN_CHECK)$(if $(filter 1,$(FORMAL)),_formal,)$(if $(filter 1,$(MAC8)),_mac8,)
 
 PKGS := $(SRC_DIR)/tcta_isa_pkg.sv $(SRC_DIR)/tcta_pkg.sv
 SRCS := $(PKGS) $(wildcard $(SRC_DIR)/fp/*.sv) $(SRC_DIR)/sfu.sv $(SRC_DIR)/token_fifo.sv $(SRC_DIR)/token_net.sv \
@@ -22,7 +24,7 @@ SRCS := $(PKGS) $(wildcard $(SRC_DIR)/fp/*.sv) $(SRC_DIR)/sfu.sv $(SRC_DIR)/toke
 VFLAGS := --cc --exe --build -j 4 -O2 --top-module tb_top -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDSIGNAL \
           -Wno-UNUSEDPARAM -Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-UNOPTFLAT --x-assign fast --x-initial fast \
           +define+TOKEN_CHECK=$(TOKEN_CHECK) --Mdir $(OBJ) -CFLAGS "-O2" \
-          $(if $(filter 1,$(FORMAL)),+define+FORMAL --assert,)
+          $(if $(filter 1,$(FORMAL)),+define+FORMAL --assert,) $(if $(filter 1,$(MAC8)),+define+TCTA_MAC8,)
 
 .PHONY: build run all lint clean vectors
 
@@ -59,4 +61,4 @@ lint:
 	$(VERILATOR) --lint-only -Wall -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC --top-module tcta_core $(SRCS)
 
 clean:
-	rm -rf obj_dir_tc0 obj_dir_tc1
+	rm -rf obj_dir_tc0* obj_dir_tc1*

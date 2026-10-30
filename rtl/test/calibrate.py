@@ -19,6 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import gen_vectors as gv  # noqa: E402  (adds sim / model / compiler paths)
 from tcta.cycle import CycleMachine  # noqa: E402
+import tcta.timing as timing  # noqa: E402
 from tcta.timing import KV260, KV260_PLAN  # noqa: E402
 
 VEC_DIR = os.path.join(HERE, "vectors")
@@ -81,14 +82,14 @@ def pair(rtl_rows, recs):
     return out
 
 
-def report(names, md=False):
+def report(names, md=False, calibrated=KV260):
     totals = []
     for name in names:
         if not os.path.exists(os.path.join(VEC_DIR, name, "rtl_trace.txt")):
             continue
         rtl_cycles, rtl_rows, fe = rtl_run(name)
         tp = model_run(name, KV260_PLAN)
-        tc = model_run(name, KV260)
+        tc = model_run(name, calibrated)
         totals.append((name, rtl_cycles, tp.cycles, tc.cycles))
         pp = pair(rtl_rows, tp.recs)
         pc_ = pair(rtl_rows, tc.recs)
@@ -131,4 +132,9 @@ def _rng(v):
 if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     names = args or ["dma_copy", "mma", "vec", "gemm", "fa", "loop"]
-    report(names, md="--md" in sys.argv)
+    # --timing NAME: the calibrated descriptor (default KV260; KV260_L5 for a `make all MAC8=1` trace)
+    cal = KV260
+    for a in sys.argv[1:]:
+        if a.startswith("--timing="):
+            cal = getattr(timing, a.split("=", 1)[1])
+    report(names, md="--md" in sys.argv, calibrated=cal)

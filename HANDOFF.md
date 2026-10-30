@@ -1,4 +1,4 @@
-# Handoff: TileLang cut-off task, phases 1–7 and phase 8 K0, L1–L4, K1 (2026-10-29)
+# Handoff: TileLang cut-off task, phases 1–7 and phase 8 K0, L1–L5, K1 (2026-10-29)
 
 For the session steering `docs/tilelang-lowering-cutoff-task.md`, its
 addendum, `docs/tilelang-phase2-moe-task.md`, `docs/tilelang-phase3-task.md`,
@@ -39,10 +39,13 @@ section. **Phase 8 K1 done** — row-pipelined DMA engines (64×128 BF16 tile
 3205 → 1127 cycles, 14.5 B/cycle; GEMM 11144 → 5917, FA 39919 → 32109),
 `STORE.2D f4.r16` and block-scaled `LOAD.IDX` bit-exact; core 162.5 k
 LUT-eq (139 % of the K26, +4 k for the `f4.r16` quantiser); see the Phase 8
-K1 verdict section. Next: K2–K8 of `docs/phase8-gate2-task.md` (K3 per the
-L1–L4 verdict's finding 4: pipeline whole rows), the L5 measurement (8×8
-array on the 16-lane core) before the Vivado run; the Vivado run (x86)
-decides the lane width.
+K1 verdict section. **L5 measured** (the 8×8 array on the 16-lane core,
+`TCTA_MAC8`, default off): −17.4 k LUT-eq (core 145.1 k, 124 % of the K26)
+for FA +72 % / GEMM +101 %; not a middle ground, the §0.3 lane rule stands
+(Phase 8 L5 section; fit report §4c). Next: K2–K8 of
+`docs/phase8-gate2-task.md` (K3 per the L1–L4 verdict's finding 4: pipeline
+whole rows); the Vivado run (x86) decides the lane width and can report
+both arrays (`vivado_ooc.tcl` with `TCTA_MAC8`).
 
 ## Phase 8 K1 in one paragraph
 
@@ -154,6 +157,7 @@ needs an x86 machine (`rtl/synth/vivado_ooc.tcl`).
 | L2 | `rtl/src/tcta_pkg.sv` (`SP_READERS / SP_WRITERS`, one address), `scratchpad.sv`, `tcta_core.sv`; `rtl/formal/bank_arbiter.sby` | done (f4afb57): pads 40.8 k → 14.5 k, glue 8.4 k → 3.6 k |
 | L3 | `rtl/src/mma_unit.sv` (`W_ADD`, `ADD_LANES`); `sim/tcta/timing.py` (`mma_cv_row_cycles`, wb extras), `cycle.py`, `tests/test_cycle.py` | done (a8244a2): `mma_unit` 51.8 k → 46.0 k; FA +1.4 % |
 | L4 | `docs/phase8-k0-fit-report.md` §4b | not taken: 64 RAMB18 for ≈ −3 k; block RAM is the tighter resource |
+| L5 | `tcta_pkg.sv` (`TCTA_MAC8`), `mma_unit.sv`, `mma_opbuf.sv`; `make all MAC8=1`; `yosys_ooc.py --define/--md`; `rtl/synth/yosys_xck26_estimate_mac8.md`; `timing.KV260_L5`; `calibrate.py --timing=` | measured, not taken: −17 445 LUT-eq (est. −35 k), MMA 3–4×, FA +72 % |
 | K1 | `rtl/src/dma_load.sv`, `dma_store.sv`, `tcta_pkg.sv` (`DMA_ROWS_IN_FLIGHT`); `sim/tcta/machine.py` (`LOAD.IDX` b32, `_row_source` phase), `dtypes.py` (`col_phase`), `cycle.py::_rtl_dma_cycles`, `timing.py`; `gen_vectors.py` gather; `isa/isa-v0.1.md` E7 | done: 14.5 B/cycle (≥ 14), FA −19.6 %, GEMM −46.9 %; `dma_store` 7.4 k → 11.4 k (f4.r16) |
 
 ## Key numbers (v1 KV260 core, RTL cycles, 24-cycle harness memory latency)
@@ -175,6 +179,7 @@ needs an x86 machine (`rtl/synth/vivado_ooc.tcl`).
   1994 (plan 3072); row reductions +4 (shared reducer).
 - Front end: 3 cycles per word (PUSH/POP too), extension word 2 + 1 per
   entry (+1 per `_mod`), LOOP/ENDLOOP 2, LOOP r 1 + ⌈R/step⌉ after VCOUNT.
+- Synthesis with the 8×8 array (`TCTA_MAC8`, L5): core 145 051 LUT-eq (124 %), `mma_unit` 35 754 (153 DSP); MMA 64×128×128 16 547 cycles, GEMM 11 875, FA 55 269.
 - Synthesis (Yosys, cells only, after K1): core 152 624 LUT + 1 234
   RAM32M16 (= 162 496 LUT-eq, 139 % of the K26) / 41 550 FF / 622 DSP;
   `mma_unit` 46 031 + 896 RAM32M16, `vec_unit` 53 581, `dma_load` 17 865 +
@@ -249,9 +254,9 @@ needs an x86 machine (`rtl/synth/vivado_ooc.tcl`).
 Fmax (Vivado on x86). Making the core fit the KV260 beyond L1–L3 and K1
 (162.5 k LUT-eq): the lane-width decision of `docs/phase8-gate2-task.md`
 §0.3 from the Vivado number (16-lane core needs ≥ 39 % under Yosys, the 8×8
-array ≈ 22 %, the 8-lane configuration fits by Yosys), L5–L7 of the fit
-report §4 are estimates (L5 to be measured next), L4 is analysed and not
-taken (§4b). Phase 8 K2–K8 of `docs/phase8-gate2-task.md` not started:
+array on it ≥ 31 % measured, the 8-lane configuration fits by Yosys), L6–L7
+of the fit report §4 are estimates, L4 is analysed and not taken (§4b), L5
+measured and not taken (§4c). Phase 8 K2–K8 of `docs/phase8-gate2-task.md` not started:
 MoE/MLA/KDA on the RTL (mechanical through `gen_vectors.py`; they measure
 VTOPK, VGATE/VMASK/VSEL, which the calibration still takes from the FSMs),
 the RTL items the calibration surfaced (column-vector layout K2, SFU slice

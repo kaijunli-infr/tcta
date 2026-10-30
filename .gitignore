@@ -14,3 +14,4 @@ rtl/formal/token_fifo/
 rtl/formal/bank_arbiter/
 rtl/synth/yosys_xck26.log
 rtl/synth/ooc/
+rtl/synth/ooc_mac8/

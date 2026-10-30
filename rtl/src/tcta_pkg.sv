@@ -20,9 +20,14 @@ package tcta_pkg;
   localparam int VEC_ROW_SLOT0 = 8;        // VEC slots >= this are row tiles [1, T_VR]
 
   // ---- units ----
+`ifdef TCTA_MAC8
+  localparam int MAC_ROWS  = 8;            // phase 8 L5 measurement: the 8 x 8 array on the 16-lane core (mma_unit takes
+  localparam int MAC_COLS  = 8;            // half a slice per block: lane offset j0 % BANKS in the B fill and the writeback)
+`else
   localparam int MAC_ROWS  = 16;
   localparam int MAC_COLS  = 16;
-  localparam int BANKS     = 16;           // = MAC_COLS = VEC_LANES: one row slice per access
+`endif
+  localparam int BANKS     = 16;           // = VEC_LANES: one row slice per access (MAC_COLS = BANKS or BANKS / 2)
   localparam int VEC_LANES = 16;
   localparam int SFU_LANES = 4;
   localparam int DMA_BYTES = 16;           // memory port width (bytes per beat)

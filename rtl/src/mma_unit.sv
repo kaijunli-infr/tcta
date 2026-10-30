@@ -19,6 +19,12 @@
 // lanes per cycle; the writeback then applies the mask (add / mul) and adds the old accumulator (accumulate) on
 // eight adders / multipliers in two lane halves each (phase 8 L3; 16 adders before), and writes the row. `wide`
 // and `row0` are address arithmetic there.
+//
+// Phase 8 L5 (TCTA_MAC8: MAC_ROWS = MAC_COLS = 8 on the 16-lane core): a block covers half a slice. The B fill takes
+// lanes j0 % 16 .. +7 of each WGT slice (one read per block as before: two blocks of one column pair read the same
+// slices), the converter places a result row at banks j0 % 16 .. +7 in one pass, the writeback works on that lane
+// half only (no second mask / add pass) and writes it with the bank enables of the half. The result FIFO holds two
+// blocks (2 * MAC_ROWS rows); blocks start every max(K, MAC_ROWS) cycles.
 module mma_unit
   import tcta_isa_pkg::*;
   import tcta_pkg::*;
@@ -52,8 +58,9 @@ module mma_unit
   output fault_t   fault_code
 );
   localparam int R = MAC_ROWS, C = MAC_COLS;
-  localparam int RF_DEPTH = 32;                 // result FIFO rows (two blocks)
+  localparam int RF_DEPTH = 2 * R;              // result FIFO rows (two blocks)
   localparam int RF_SLOTS = RF_DEPTH / R;
+  localparam int RW = $clog2(R), CW = $clog2(C);
   localparam int HALVES = 4;                    // block buffers per operand
   localparam int HALF_W = $clog2(HALVES);
   localparam int ENTRIES = FIX_K_MAX / BANKS;   // slices per buffered row / column
@@ -63,6 +70,8 @@ module mma_unit
                                                 // phase 8 L3: 4 lanes (-2.5 k LUTs) saturate at P = 64 (16 rows x 4 cycles) and
                                                 // cost FA's 64x64x64 products +15.6 % (measured 1148 -> 1327)
   localparam int MUL_LANES = 8;                 // mask multipliers: a row in BANKS / MUL_LANES cycles
+  localparam int CV_HALVES = C / CV_LANES;      // converter passes per result row (1 with the 8 x 8 array)
+  localparam bit WB_ONE = (C <= BANKS / 2);     // the result row fits one adder half: one mask pass, old + result in W_WRITE
   localparam int RFW = 3 + FIX_ACC_W;           // a result FIFO lane entry: {flags, acc}
 
   // ---------------------------------------------------------------- instruction decode
@@ -77,7 +86,7 @@ module mma_unit
   logic        ab_we, bb_we, bb_scatter;
   logic [HALF_W-1:0] ab_whalf, bb_whalf;
   logic [ENT_W-1:0]  ab_wentry, bb_wentry;
-  logic [3:0]  bb_wlane, ab_wrow, bb_wrow;
+  logic [3:0]  bb_wlane; logic [RW-1:0] ab_wrow; logic [CW-1:0] bb_wrow;
   logic [15:0] ab_wdata [BANKS], bb_wdata [BANKS];
   logic [HALF_W-1:0] ab_rhalf [R], bb_rhalf [C];
   logic [KW-1:0]     ab_rk [R], bb_rk [C];
@@ -88,7 +97,8 @@ module mma_unit
   mma_opbuf #(.ROWS(C), .HALVES(HALVES), .ENTRIES(ENTRIES)) u_bbuf (
     .clk(clk), .we(bb_we), .w_scatter(bb_scatter), .w_half(bb_whalf), .w_entry(bb_wentry), .w_lane(bb_wlane), .w_row(bb_wrow),
     .w_data(bb_wdata), .r_half(bb_rhalf), .r_k(bb_rk), .r_data(bb_rdata));
-  always_comb for (int l = 0; l < BANKS; l++) begin ab_wdata[l] = a_rdata[l][31:16]; bb_wdata[l] = b_rdata[l][31:16]; end
+  int bfq_off;                                  // B fill (MMA): the block's lane offset j0 % BANKS in the WGT slice (0 with C = BANKS)
+  always_comb for (int l = 0; l < BANKS; l++) begin ab_wdata[l] = a_rdata[l][31:16]; bb_wdata[l] = b_rdata[(bfq_off + l) % BANKS][31:16]; end
 
   // the maximum effective exponent over the valid, finite lanes of a slice (1 if none)
   function automatic logic [7:0] lane_emax(input slice_t s, input logic [BANKS-1:0] lanes);
@@ -108,7 +118,7 @@ module mma_unit
   logic a_ready [HALVES], a_busy [HALVES];
   int   a_rel [HALVES];
   logic [7:0] emax_a [HALVES][R];
-  logic afq_v, afq_first, afq_last; logic [HALF_W-1:0] afq_half; logic [3:0] afq_row; logic [ENT_W-1:0] afq_cg; logic [BANKS-1:0] afq_lanes;
+  logic afq_v, afq_first, afq_last; logic [HALF_W-1:0] afq_half; logic [RW-1:0] afq_row; logic [ENT_W-1:0] afq_cg; logic [BANKS-1:0] afq_lanes;
   logic af_next_ok;                              // the fill of the next row block may follow without a bubble
   always_comb begin
     af_half = HALF_W'(af_ib % HALVES);
@@ -127,7 +137,7 @@ module mma_unit
   logic b_ready [HALVES], b_busy [HALVES];
   int   b_rel [HALVES];
   logic [7:0] emax_b [HALVES][C];
-  logic bfq_v, bfq_first, bfq_last; logic [HALF_W-1:0] bfq_half; logic [3:0] bfq_row; logic [ENT_W-1:0] bfq_entry; logic [3:0] bfq_lane; logic [BANKS-1:0] bfq_lanes;
+  logic bfq_v, bfq_first, bfq_last; logic [HALF_W-1:0] bfq_half; logic [CW-1:0] bfq_row; logic [ENT_W-1:0] bfq_entry; logic [3:0] bfq_lane; logic [BANKS-1:0] bfq_lanes;
   logic bf_next_ok;
   always_comb begin
     bf_half = HALF_W'(bf_blk % HALVES);
@@ -266,15 +276,15 @@ module mma_unit
   // ---------------------------------------------------------------- lane collectors -> result FIFO lanes
   // cell (i, j) holds its sums for one cycle; in lane j at most one row is finishing per cycle, R cycles apart
   // per block, so a one-hot select over the rows writes {flags, acc} into lane RAM j at entry {slot, i}.
-  logic sel_v [C]; logic [3:0] sel_i [C];
+  logic sel_v [C]; logic [RW-1:0] sel_i [C];
   logic signed [FIX_ACC_W-1:0] lane_acc [C];
   logic [RFW-1:0] rf_rd_lane [C];
   int   rf_rd, rf_cnt;
   logic rf_push, cv_pop;
   always_comb begin
     for (int j = 0; j < C; j++) begin
-      sel_v[j] = 1'b0; sel_i[j] = 4'd0;
-      for (int i = 0; i < R; i++) if (res_v[i][j]) begin sel_v[j] = 1'b1; sel_i[j] = 4'(i); end
+      sel_v[j] = 1'b0; sel_i[j] = '0;
+      for (int i = 0; i < R; i++) if (res_v[i][j]) begin sel_v[j] = 1'b1; sel_i[j] = RW'(i); end
       if (ACC_F32) lane_acc[j] = FIX_ACC_W'($signed(cp[sel_i[j]][j][0][31:0]));
       else begin
         lane_acc[j] = '0;
@@ -293,11 +303,15 @@ module mma_unit
   // ---------------------------------------------------------------- converter stage (fixed -> f32, CV_LANES per cycle)
   logic cv_busy, cv_v, cv_start, cv_take;
   int   cv_half, cv_half_now;                  // the half being converted: 0 in the start cycle
+  int   cv_off_now;                            // the row's first bank: j0 % BANKS (0 with C = BANKS)
   slice_t cv_row;
   int   cv_i0, cv_j0, cv_i;
   logic [31:0] cv_y [CV_LANES];
-  logic rd_slot; logic [3:0] rd_i;
-  always_comb begin rd_slot = rf_rd[$clog2(RF_DEPTH)-1]; rd_i = 4'(rf_rd % R); cv_half_now = cv_busy ? cv_half : 0; end
+  logic rd_slot; logic [RW-1:0] rd_i;
+  always_comb begin
+    rd_slot = rf_rd[$clog2(RF_DEPTH)-1]; rd_i = RW'(rf_rd % R); cv_half_now = cv_busy ? cv_half : 0;
+    cv_off_now = (C < BANKS) ? ((cv_busy ? cv_j0 : sl_j0[rd_slot]) % BANKS) : 0;
+  end
   for (genvar l = 0; l < CV_LANES; l++) begin : g_cv
     logic [RFW-1:0] e; logic signed [FIX_W_W-1:0] w; int lane;
     always_comb begin
@@ -325,8 +339,9 @@ module mma_unit
   logic [31:0] s_outq [ADD_LANES];
   int      popped;
   logic [31:0] add_a [ADD_LANES], add_b [ADD_LANES], add_y [ADD_LANES], mk_mul [MUL_LANES];
-  int      wb_half;
+  int      wb_half, wb_off;
   logic    wb_mask_op;
+  logic [BANKS-1:0] wb_ben;
   for (genvar b = 0; b < ADD_LANES; b++) begin : g_wb
     // one adder bank: the mask add (W_MCALC, W_MCALC2) and the old-accumulator add (W_ADD, W_WRITE) never happen in the same cycle
     f32_add u_add (.a(add_a[b]), .b(add_b[b]), .sub(1'b0), .y(add_y[b]));
@@ -335,14 +350,15 @@ module mma_unit
     f32_mul u_mm (.a(wrow.data[wb_half * MUL_LANES + b]), .b(mask_d[wb_half * MUL_LANES + b]), .y(mk_mul[b]));
   end
   always_comb begin
-    wb_half = (wst == W_MCALC2 || wst == W_WRITE) ? 1 : 0;
+    wb_off  = (C < BANKS) ? int'(wrow.j0) % BANKS : 0;
+    wb_half = WB_ONE ? wb_off / ADD_LANES : ((wst == W_MCALC2 || wst == W_WRITE) ? 1 : 0);
     wb_mask_op = (wst == W_MCALC) || (wst == W_MCALC2);
     for (int b = 0; b < ADD_LANES; b++) begin
       add_a[b] = wb_mask_op ? wrow.data[wb_half * ADD_LANES + b] : old_d[wb_half * ADD_LANES + b];
       add_b[b] = wb_mask_op ? mask_d[wb_half * ADD_LANES + b] : s_masked[wb_half * ADD_LANES + b];
     end
     for (int b = 0; b < BANKS; b++)
-      s_out[b] = !accumulate ? s_masked[b] : (b < ADD_LANES) ? s_outq[b] : add_y[b - ADD_LANES];
+      s_out[b] = !accumulate ? s_masked[b] : WB_ONE ? add_y[b % ADD_LANES] : (b < ADD_LANES) ? s_outq[b] : add_y[b - ADD_LANES];
   end
   function automatic logic [11:0] wb_slot(input int j0);
     return tref_slot(acc_t) + 12'(wide ? j0 / T_N : 0);
@@ -353,16 +369,17 @@ module mma_unit
   int w_row, w_j0;
   always_comb begin
     w_row = r0 + int'(wrow.i0) + int'(wrow.i); w_j0 = int'(wrow.j0);
+    for (int b = 0; b < BANKS; b++) wb_ben[b] = slice_ben(N, w_j0 / BANKS)[b] && (b >= wb_off) && (b < wb_off + C);
     wb_req = '0;
     case (wst)
       W_MASK:  wb_req = slice_req(tref_sp(mask_t), tref_slot(mask_t), int'(wrow.i0) + int'(wrow.i), w_j0 / BANKS, 1'b0, '0, '0);
       W_OLD:   wb_req = slice_req(tref_sp(acc_t), wb_slot(w_j0), w_row, wb_cg(w_j0), 1'b0, '0, '0);
-      W_WRITE: wb_req = slice_req(tref_sp(acc_t), wb_slot(w_j0), w_row, wb_cg(w_j0), 1'b1, slice_ben(N, w_j0 / BANKS), s_out);
+      W_WRITE: wb_req = slice_req(tref_sp(acc_t), wb_slot(w_j0), w_row, wb_cg(w_j0), 1'b1, wb_ben, s_out);
       default: ;
     endcase
     cv_take  = (wst == W_IDLE) && cv_v && (st == S_RUN);
     cv_start = (st == S_RUN) && (rf_cnt > 0) && !cv_busy && (!cv_v || cv_take);
-    cv_pop   = cv_busy && (cv_half == BANKS / CV_LANES - 1);       // the row leaves the FIFO with its last lanes
+    cv_pop   = (CV_HALVES == 1) ? cv_start : (cv_busy && (cv_half == CV_HALVES - 1));   // the row leaves the FIFO with its last lanes
   end
 
   // ---------------------------------------------------------------- meta writes
@@ -392,10 +409,10 @@ module mma_unit
     if (!rst_n) begin
       st <= S_IDLE; cur <= '0; fault <= 0; fault_code <= F_NONE;
       acc_t <= '0; a_t <= '0; b_t <= '0; mask_t <= '0; transpose <= 0; masked <= 0; mask_mul <= 0; accumulate <= 0; wide <= 0;
-      M <= 0; K <= 0; N <= 0; r0 <= 0; n_ib <= 0; n_jb <= 0; n_blocks <= 0; P <= 16; n_cg <= 0;
+      M <= 0; K <= 0; N <= 0; r0 <= 0; n_ib <= 0; n_jb <= 0; n_blocks <= 0; P <= R; n_cg <= 0;
       blk <= 0; pt <= 0; committed <= 0; started_any <= 0; mk <= 0; popped <= 0;
       af_active <= 0; af_ib <= 0; af_row <= 0; af_cg <= 0; afq_v <= 0; afq_first <= 0; afq_last <= 0; afq_half <= '0; afq_row <= '0; afq_cg <= '0; afq_lanes <= '0;
-      bf_active <= 0; bf_blk <= 0; bf_k <= 0; bf_row <= 0; bf_cg <= 0; bfq_v <= 0; bfq_first <= 0; bfq_last <= 0; bfq_half <= '0; bfq_row <= '0; bfq_entry <= '0; bfq_lane <= '0; bfq_lanes <= '0;
+      bf_active <= 0; bf_blk <= 0; bf_k <= 0; bf_row <= 0; bf_cg <= 0; bfq_v <= 0; bfq_first <= 0; bfq_last <= 0; bfq_half <= '0; bfq_row <= '0; bfq_entry <= '0; bfq_lane <= '0; bfq_lanes <= '0; bfq_off <= 0;
       for (int h = 0; h < HALVES; h++) begin
         a_ready[h] <= 0; a_busy[h] <= 0; a_rel[h] <= 0; b_ready[h] <= 0; b_busy[h] <= 0; b_rel[h] <= 0;
         for (int i = 0; i < R; i++) emax_a[h][i] <= 8'd1;
@@ -437,7 +454,7 @@ module mma_unit
                                    : int'(meta[slot_index(tref_sp(cur.c), tref_slot(cur.c))].cols);
           M <= m; K <= k; N <= n; n_cg <= n_slices(k);
           n_ib <= (m + R - 1) / R; n_jb <= (n + C - 1) / C; n_blocks <= ((m + R - 1) / R) * ((n + C - 1) / C);
-          P <= (k < 16) ? 16 : k;
+          P <= (k < R) ? R : k;
           blk <= 0; pt <= 0; committed <= 0; started_any <= 0; popped <= 0; mk <= 0;
           af_active <= 0; af_ib <= 0; af_row <= 0; af_cg <= 0; bf_active <= 0; bf_blk <= 0; bf_k <= 0; bf_row <= 0; bf_cg <= 0;
           for (int h = 0; h < HALVES; h++) begin a_ready[h] <= 0; a_busy[h] <= 0; a_rel[h] <= 0; b_ready[h] <= 0; b_busy[h] <= 0; b_rel[h] <= 0; end
@@ -460,7 +477,7 @@ module mma_unit
 
       // ---- A fill ----
       if (af_start) af_active <= 1;
-      afq_v <= af_active || af_start; afq_half <= af_half; afq_row <= 4'(af_row); afq_cg <= ENT_W'(af_cg);
+      afq_v <= af_active || af_start; afq_half <= af_half; afq_row <= RW'(af_row); afq_cg <= ENT_W'(af_cg);
       afq_first <= (af_cg == 0); afq_lanes <= slice_ben(K, af_cg); afq_last <= (af_row == R - 1) && (af_cg + 1 >= n_cg);
       if (af_active || af_start) begin
         if (af_cg + 1 >= n_cg) begin
@@ -476,12 +493,12 @@ module mma_unit
       end
       // ---- B fill ----
       if (bf_start) bf_active <= 1;
-      bfq_v <= bf_active || bf_start; bfq_half <= bf_half;
+      bfq_v <= bf_active || bf_start; bfq_half <= bf_half; bfq_off <= (transpose || C == BANKS) ? 0 : bf_j0 % BANKS;
       if (transpose) begin
-        bfq_row <= 4'(bf_row); bfq_entry <= ENT_W'(bf_cg); bfq_lane <= 4'd0; bfq_first <= (bf_cg == 0);
+        bfq_row <= CW'(bf_row); bfq_entry <= ENT_W'(bf_cg); bfq_lane <= 4'd0; bfq_first <= (bf_cg == 0);
         bfq_lanes <= slice_ben(K, bf_cg); bfq_last <= (bf_row == C - 1) && (bf_cg + 1 >= n_cg);
       end else begin
-        bfq_row <= 4'd0; bfq_entry <= ENT_W'(bf_k / BANKS); bfq_lane <= 4'(bf_k % BANKS); bfq_first <= (bf_k == 0);
+        bfq_row <= '0; bfq_entry <= ENT_W'(bf_k / BANKS); bfq_lane <= 4'(bf_k % BANKS); bfq_first <= (bf_k == 0);
         bfq_lanes <= '1; bfq_last <= (bf_k + 1 >= K);
       end
       if (bf_active || bf_start) begin
@@ -502,7 +519,7 @@ module mma_unit
         end else begin
           for (int j = 0; j < C; j++) begin
             bf16_f_t f; logic [7:0] e;
-            f = bf16_fields(b_rdata[j][31:16]);
+            f = bf16_fields(b_rdata[(bfq_off + j) % BANKS][31:16]);
             e = (f.nan || f.inf) ? 8'd1 : f.e;
             emax_b[bfq_half][j] <= (bfq_first || emax_b[bfq_half][j] < e) ? e : emax_b[bfq_half][j];
           end
@@ -560,13 +577,13 @@ module mma_unit
       // ---- converter stage ----
       if (cv_take) cv_v <= 0;
       if (cv_start || cv_busy)
-        for (int l = 0; l < CV_LANES; l++) cv_row[cv_half_now * CV_LANES + l] <= cv_y[l];
+        for (int l = 0; l < CV_LANES; l++) cv_row[cv_off_now + cv_half_now * CV_LANES + l] <= cv_y[l];
       if (cv_start) begin                                           // the first lanes convert in the start cycle
-        cv_busy <= 1; cv_half <= 1;
         cv_i0 <= sl_i0[rd_slot]; cv_j0 <= sl_j0[rd_slot]; cv_i <= int'(rd_i);
+        if (CV_HALVES == 1) cv_v <= 1; else begin cv_busy <= 1; cv_half <= 1; end
       end
       if (cv_busy) begin
-        if (cv_half + 1 >= BANKS / CV_LANES) begin cv_busy <= 0; cv_v <= 1; end else cv_half <= cv_half + 1;
+        if (cv_half + 1 >= CV_HALVES) begin cv_busy <= 0; cv_v <= 1; end else cv_half <= cv_half + 1;
       end
 
       // ---- writeback FSM ----
@@ -582,15 +599,15 @@ module mma_unit
         W_MASK: if (wb_grant) wst <= W_MASK_WAIT;
         W_MASK_WAIT: if (wb_rvalid) begin mask_d <= wb_rdata; wst <= W_MCALC; end
         W_MCALC: begin                                             // lanes 0 .. 7 of the mask add / mul
-          for (int b = 0; b < ADD_LANES; b++) s_masked[b] <= mask_mul ? mk_mul[b] : add_y[b];
-          wst <= W_MCALC2;
+          for (int b = 0; b < ADD_LANES; b++) s_masked[wb_half * ADD_LANES + b] <= mask_mul ? mk_mul[b] : add_y[b];
+          wst <= WB_ONE ? (accumulate ? W_OLD : W_WRITE) : W_MCALC2;
         end
         W_MCALC2: begin                                            // lanes 8 .. 15
           for (int b = 0; b < ADD_LANES; b++) s_masked[ADD_LANES + b] <= mask_mul ? mk_mul[b] : add_y[b];
           wst <= accumulate ? W_OLD : W_WRITE;
         end
         W_OLD: if (wb_grant) wst <= W_OLD_WAIT;
-        W_OLD_WAIT: if (wb_rvalid) begin old_d <= wb_rdata; wst <= W_ADD; end
+        W_OLD_WAIT: if (wb_rvalid) begin old_d <= wb_rdata; wst <= WB_ONE ? W_WRITE : W_ADD; end
         W_ADD: begin                                               // lanes 0 .. 7 of old + result; 8 .. 15 add in W_WRITE
           for (int b = 0; b < ADD_LANES; b++) s_outq[b] <= add_y[b];
           wst <= W_WRITE;
