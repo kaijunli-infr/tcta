@@ -1,0 +1,1032 @@
+
+ /----------------------------------------------------------------------------\
+ |  yosys -- Yosys Open SYnthesis Suite                                       |
+ |  Copyright (C) 2012 - 2026  Claire Xenia Wolf <claire@yosyshq.com>         |
+ |  Distributed under an ISC-like license, type "license" to see terms        |
+ \----------------------------------------------------------------------------/
+ Yosys 0.70+221 (git sha1 33177a407, Release, GNU /usr/bin/aarch64-linux-gnu-g++ 15.2.0)
+
+-- Executing script file `../model/design.ys' --
+
+1. Executing SLANG frontend.
+Top level design units:
+    scratchpad
+
+
+Build succeeded: 0 errors, 0 warnings
+
+1.1. Executing PROC_CLEAN pass (remove empty switches from decision trees).
+Found and cleaned up 9 empty switches in `\scratchpad.$701'.
+Removing empty process `scratchpad.$661'.
+Found and cleaned up 1 empty switch in `\scratchpad.$649'.
+Removing empty process `scratchpad.$638'.
+Removing empty process `scratchpad.$636'.
+Found and cleaned up 2 empty switches in `\scratchpad.$253'.
+Found and cleaned up 1 empty switch in `\scratchpad.$240'.
+Found and cleaned up 1 empty switch in `\scratchpad.$0'.
+Cleaned up 14 empty switches.
+
+1.2. Executing PROC_RMDEAD pass (remove dead branches from decision trees).
+Marked 28 switch rules as full_case in process $253 in module scratchpad.
+Marked 1 switch rules as full_case in process $240 in module scratchpad.
+Marked 38 switch rules as full_case in process $0 in module scratchpad.
+Removed a total of 0 dead cases.
+
+1.3. Executing PROC_PRUNE pass (remove redundant assignments in processes).
+Removed 32 redundant assignments.
+Promoted 29 assignments to connections.
+
+1.4. Executing PROC_INIT pass (extract init attributes).
+
+1.5. Executing PROC_ROM pass (convert switches to ROMs).
+Converted 0 switches.
+<suppressed ~166 debug messages>
+
+1.6. Executing PROC_MUX pass (convert decision trees to multiplexers).
+Creating decoders for process `\scratchpad.$701'.
+Creating decoders for process `\scratchpad.$649'.
+     1/1: $ser_rd$660
+Creating decoders for process `\scratchpad.$626'.
+     1/1: $631
+Creating decoders for process `\scratchpad.$618'.
+     1/1: $623
+Creating decoders for process `\scratchpad.$608'.
+     1/1: $613
+Creating decoders for process `\scratchpad.$600'.
+     1/1: $605
+Creating decoders for process `\scratchpad.$590'.
+     1/1: $595
+Creating decoders for process `\scratchpad.$582'.
+     1/1: $587
+Creating decoders for process `\scratchpad.$572'.
+     1/1: $577
+Creating decoders for process `\scratchpad.$564'.
+     1/1: $569
+Creating decoders for process `\scratchpad.$554'.
+     1/1: $559
+Creating decoders for process `\scratchpad.$546'.
+     1/1: $551
+Creating decoders for process `\scratchpad.$536'.
+     1/1: $541
+Creating decoders for process `\scratchpad.$528'.
+     1/1: $533
+Creating decoders for process `\scratchpad.$518'.
+     1/1: $523
+Creating decoders for process `\scratchpad.$510'.
+     1/1: $515
+Creating decoders for process `\scratchpad.$500'.
+     1/1: $505
+Creating decoders for process `\scratchpad.$492'.
+     1/1: $497
+Creating decoders for process `\scratchpad.$482'.
+     1/1: $487
+Creating decoders for process `\scratchpad.$474'.
+     1/1: $479
+Creating decoders for process `\scratchpad.$464'.
+     1/1: $469
+Creating decoders for process `\scratchpad.$456'.
+     1/1: $461
+Creating decoders for process `\scratchpad.$446'.
+     1/1: $451
+Creating decoders for process `\scratchpad.$438'.
+     1/1: $443
+Creating decoders for process `\scratchpad.$428'.
+     1/1: $433
+Creating decoders for process `\scratchpad.$420'.
+     1/1: $425
+Creating decoders for process `\scratchpad.$410'.
+     1/1: $415
+Creating decoders for process `\scratchpad.$402'.
+     1/1: $407
+Creating decoders for process `\scratchpad.$392'.
+     1/1: $397
+Creating decoders for process `\scratchpad.$384'.
+     1/1: $389
+Creating decoders for process `\scratchpad.$374'.
+     1/1: $379
+Creating decoders for process `\scratchpad.$366'.
+     1/1: $371
+Creating decoders for process `\scratchpad.$356'.
+     1/1: $361
+Creating decoders for process `\scratchpad.$348'.
+     1/1: $353
+Creating decoders for process `\scratchpad.$253'.
+     1/59: $pA_wdata$346
+     2/59: $pA_ben$345
+     3/59: $pA_addr$344
+     4/59: $pB_wdata$325
+     5/59: $pB_ben$324
+     6/59: $pB_we$323
+     7/59: $pA_wdata$321
+     8/59: $pA_ben$320
+     9/59: $pA_we$319
+    10/59: $pB_addr$317
+    11/59: $pA_addr$316
+    12/59: $pB_wdata$315
+    13/59: $pB_ben$314
+    14/59: $pB_we$313
+    15/59: $pA_wdata$311
+    16/59: $pA_ben$310
+    17/59: $pA_we$309
+    18/59: $pB_addr$307
+    19/59: $pA_addr$306
+    20/59: $pB_wdata$305
+    21/59: $pB_ben$304
+    22/59: $pB_we$303
+    23/59: $pA_wdata$301
+    24/59: $pA_ben$300
+    25/59: $pA_we$299
+    26/59: $pB_addr$297
+    27/59: $pA_addr$296
+    28/59: $pB_wdata$295
+    29/59: $pB_ben$294
+    30/59: $pB_we$293
+    31/59: $pA_wdata$291
+    32/59: $pA_ben$290
+    33/59: $pA_we$289
+    34/59: $pB_addr$287
+    35/59: $pA_addr$286
+    36/59: $pB_wdata$285
+    37/59: $pB_ben$284
+    38/59: $pB_we$283
+    39/59: $pA_wdata$281
+    40/59: $pA_ben$280
+    41/59: $pA_we$279
+    42/59: $pB_addr$277
+    43/59: $pA_addr$276
+    44/59: $pB_wdata$275
+    45/59: $pB_ben$274
+    46/59: $pB_we$273
+    47/59: $pA_wdata$271
+    48/59: $pA_ben$270
+    49/59: $pA_we$269
+    50/59: $pB_addr$267
+    51/59: $pA_addr$266
+    52/59: $pB_wdata$265
+    53/59: $pB_ben$264
+    54/59: $pB_we$263
+    55/59: $pA_wdata$261
+    56/59: $pA_ben$260
+    57/59: $pA_we$259
+    58/59: $pB_addr$257
+    59/59: $pA_addr$256
+Creating decoders for process `\scratchpad.$240'.
+     1/5: $ser_busy$248
+     2/5: $ser_rem$252
+     3/5: $ser_we$251
+     4/5: $ser_addr$250
+     5/5: $ser_cl$249
+Creating decoders for process `\scratchpad.$0'.
+     1/67: $wB$231
+     2/67: $gB[6]$230
+     3/67: $wB$220
+     4/67: $gB[5]$219
+     5/67: $wB$209
+     6/67: $gB[4]$208
+     7/67: $wB$198
+     8/67: $gB[3]$197
+     9/67: $wB$187
+    10/67: $gB[2]$186
+    11/67: $wB$176
+    12/67: $gB[1]$175
+    13/67: $wB$165
+    14/67: $gB[0]$164
+    15/67: $ser_j[3:0]$145
+    16/67: $ser_j[3:0]$144
+    17/67: $ser_j[3:0]$143
+    18/67: $ser_j[3:0]$142
+    19/67: $ser_j[3:0]$141
+    20/67: $ser_j[3:0]$140
+    21/67: $ser_j[3:0]$139
+    22/67: $ser_j[3:0]$138
+    23/67: $ser_j[3:0]$137
+    24/67: $ser_j[3:0]$136
+    25/67: $ser_j[3:0]$135
+    26/67: $ser_j[3:0]$134
+    27/67: $ser_j[3:0]$133
+    28/67: $ser_j[3:0]$132
+    29/67: $ser_j[3:0]$131
+    30/67: $ser_j[3:0]$130
+    31/67: $benA$120
+    32/67: $aA$119
+    33/67: $wA$118
+    34/67: $benA$116
+    35/67: $aA$115
+    36/67: $wA$114
+    37/67: $benA$112
+    38/67: $aA$111
+    39/67: $wA$110
+    40/67: $benA$108
+    41/67: $aA$107
+    42/67: $wA$106
+    43/67: $benA$104
+    44/67: $aA$103
+    45/67: $wA$102
+    46/67: $benA$100
+    47/67: $aA$99
+    48/67: $wA$98
+    49/67: $benA$96
+    50/67: $aA$95
+    51/67: $wA$94
+    52/67: $selA_i[2:0]$90
+    53/67: $selA$89
+    54/67: $selA_i[2:0]$88
+    55/67: $selA[6:1]$87
+    56/67: $selA_i[2:0]$86
+    57/67: $selA[6:2]$85
+    58/67: $selA_i[2:0]$84
+    59/67: $selA[6:3]$83
+    60/67: $selA_i[2:0]$82
+    61/67: $selA[6:4]$81
+    62/67: $selA_i[2:0]$80
+    63/67: $selA[6:5]$79
+    64/67: $selA_i[2:1]$78
+    65/67: $selA[6]$77
+    66/67: $selA_i[2:0]$92
+    67/67: $selA$91
+
+1.7. Executing PROC_CLEAN pass (remove empty switches from decision trees).
+Removing empty process `scratchpad.$701'.
+Found and cleaned up 1 empty switch in `\scratchpad.$649'.
+Removing empty process `scratchpad.$649'.
+Found and cleaned up 1 empty switch in `\scratchpad.$626'.
+Removing empty process `scratchpad.$626'.
+Found and cleaned up 1 empty switch in `\scratchpad.$618'.
+Removing empty process `scratchpad.$618'.
+Found and cleaned up 1 empty switch in `\scratchpad.$608'.
+Removing empty process `scratchpad.$608'.
+Found and cleaned up 1 empty switch in `\scratchpad.$600'.
+Removing empty process `scratchpad.$600'.
+Found and cleaned up 1 empty switch in `\scratchpad.$590'.
+Removing empty process `scratchpad.$590'.
+Found and cleaned up 1 empty switch in `\scratchpad.$582'.
+Removing empty process `scratchpad.$582'.
+Found and cleaned up 1 empty switch in `\scratchpad.$572'.
+Removing empty process `scratchpad.$572'.
+Found and cleaned up 1 empty switch in `\scratchpad.$564'.
+Removing empty process `scratchpad.$564'.
+Found and cleaned up 1 empty switch in `\scratchpad.$554'.
+Removing empty process `scratchpad.$554'.
+Found and cleaned up 1 empty switch in `\scratchpad.$546'.
+Removing empty process `scratchpad.$546'.
+Found and cleaned up 1 empty switch in `\scratchpad.$536'.
+Removing empty process `scratchpad.$536'.
+Found and cleaned up 1 empty switch in `\scratchpad.$528'.
+Removing empty process `scratchpad.$528'.
+Found and cleaned up 1 empty switch in `\scratchpad.$518'.
+Removing empty process `scratchpad.$518'.
+Found and cleaned up 1 empty switch in `\scratchpad.$510'.
+Removing empty process `scratchpad.$510'.
+Found and cleaned up 1 empty switch in `\scratchpad.$500'.
+Removing empty process `scratchpad.$500'.
+Found and cleaned up 1 empty switch in `\scratchpad.$492'.
+Removing empty process `scratchpad.$492'.
+Found and cleaned up 1 empty switch in `\scratchpad.$482'.
+Removing empty process `scratchpad.$482'.
+Found and cleaned up 1 empty switch in `\scratchpad.$474'.
+Removing empty process `scratchpad.$474'.
+Found and cleaned up 1 empty switch in `\scratchpad.$464'.
+Removing empty process `scratchpad.$464'.
+Found and cleaned up 1 empty switch in `\scratchpad.$456'.
+Removing empty process `scratchpad.$456'.
+Found and cleaned up 1 empty switch in `\scratchpad.$446'.
+Removing empty process `scratchpad.$446'.
+Found and cleaned up 1 empty switch in `\scratchpad.$438'.
+Removing empty process `scratchpad.$438'.
+Found and cleaned up 1 empty switch in `\scratchpad.$428'.
+Removing empty process `scratchpad.$428'.
+Found and cleaned up 1 empty switch in `\scratchpad.$420'.
+Removing empty process `scratchpad.$420'.
+Found and cleaned up 1 empty switch in `\scratchpad.$410'.
+Removing empty process `scratchpad.$410'.
+Found and cleaned up 1 empty switch in `\scratchpad.$402'.
+Removing empty process `scratchpad.$402'.
+Found and cleaned up 1 empty switch in `\scratchpad.$392'.
+Removing empty process `scratchpad.$392'.
+Found and cleaned up 1 empty switch in `\scratchpad.$384'.
+Removing empty process `scratchpad.$384'.
+Found and cleaned up 1 empty switch in `\scratchpad.$374'.
+Removing empty process `scratchpad.$374'.
+Found and cleaned up 1 empty switch in `\scratchpad.$366'.
+Removing empty process `scratchpad.$366'.
+Found and cleaned up 1 empty switch in `\scratchpad.$356'.
+Removing empty process `scratchpad.$356'.
+Found and cleaned up 1 empty switch in `\scratchpad.$348'.
+Removing empty process `scratchpad.$348'.
+Found and cleaned up 57 empty switches in `\scratchpad.$253'.
+Removing empty process `scratchpad.$253'.
+Found and cleaned up 1 empty switch in `\scratchpad.$240'.
+Removing empty process `scratchpad.$240'.
+Found and cleaned up 75 empty switches in `\scratchpad.$0'.
+Removing empty process `scratchpad.$0'.
+Cleaned up 166 empty switches.
+
+1.8. Executing OPT_EXPR pass (perform const folding).
+Optimizing module scratchpad.
+<suppressed ~66 debug messages>
+
+2. Executing PREP pass.
+
+2.1. Executing HIERARCHY pass (managing design hierarchy).
+
+2.1.1. Analyzing design hierarchy..
+Top module:  \scratchpad
+
+2.1.2. Analyzing design hierarchy..
+Top module:  \scratchpad
+Removed 0 unused modules.
+Module scratchpad directly or indirectly contains formal properties -> setting "keep" attribute.
+
+2.2. Executing PROC pass (convert processes to netlists).
+
+2.2.1. Executing PROC_CLEAN pass (remove empty switches from decision trees).
+Cleaned up 0 empty switches.
+
+2.2.2. Executing PROC_RMDEAD pass (remove dead branches from decision trees).
+Removed a total of 0 dead cases.
+
+2.2.3. Executing PROC_PRUNE pass (remove redundant assignments in processes).
+Removed 0 redundant assignments.
+Promoted 0 assignments to connections.
+
+2.2.4. Executing PROC_INIT pass (extract init attributes).
+
+2.2.5. Executing PROC_ARST pass (detect async resets in processes).
+
+2.2.6. Executing PROC_ROM pass (convert switches to ROMs).
+Converted 0 switches.
+
+2.2.7. Executing PROC_MUX pass (convert decision trees to multiplexers).
+
+2.2.8. Executing PROC_DLATCH pass (convert process syncs to latches).
+
+2.2.9. Executing PROC_DFF pass (convert process syncs to FFs).
+
+2.2.10. Executing PROC_MEMWR pass (convert process memory writes to cells).
+
+2.2.11. Executing PROC_CLEAN pass (remove empty switches from decision trees).
+Cleaned up 0 empty switches.
+
+2.2.12. Executing OPT_EXPR pass (perform const folding).
+Optimizing module scratchpad.
+
+2.3. Executing FUTURE pass.
+
+2.4. Executing OPT_EXPR pass (perform const folding).
+Optimizing module scratchpad.
+
+2.5. Executing CHECK pass (checking for obvious problems).
+Checking module scratchpad...
+Found and reported 0 problems.
+
+2.6. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \scratchpad..
+Removed 2 unused cells and 500 unused wires.
+<suppressed ~44 debug messages>
+
+2.7. Executing OPT pass (performing simple optimizations).
+
+2.7.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module scratchpad.
+<suppressed ~1 debug messages>
+
+2.7.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\scratchpad'.
+Computing hashes of 805 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Computing hashes of 752 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Computing hashes of 736 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Computing hashes of 727 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Computing hashes of 720 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+<suppressed ~255 debug messages>
+Removed a total of 85 cells.
+
+2.7.3. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \scratchpad..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+    dead port 1/2 on $mux $procmux$415.
+    dead port 1/2 on $mux $procmux$421.
+    dead port 1/2 on $mux $procmux$427.
+    dead port 1/2 on $mux $procmux$433.
+    dead port 1/2 on $mux $procmux$439.
+    dead port 1/2 on $mux $procmux$445.
+    dead port 1/2 on $mux $procmux$451.
+    dead port 1/2 on $mux $procmux$457.
+    dead port 1/2 on $mux $procmux$463.
+    dead port 1/2 on $mux $procmux$469.
+    dead port 1/2 on $mux $procmux$475.
+    dead port 1/2 on $mux $procmux$481.
+    dead port 1/2 on $mux $procmux$486.
+    dead port 1/2 on $mux $procmux$491.
+Removed 14 multiplexer ports.
+<suppressed ~348 debug messages>
+
+2.7.4. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \scratchpad.
+    Consolidated identical input bits for $mux cell $632:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$632y
+      New ports: A=1'0, B=1'1, Y=$632y [0]
+      New connections: $632y [31:1] = { $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] $632y [0] }
+    Consolidated identical input bits for $mux cell $624:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$624y
+      New ports: A=1'0, B=1'1, Y=$624y [0]
+      New connections: $624y [31:1] = { $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] $624y [0] }
+    Consolidated identical input bits for $mux cell $614:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$614y
+      New ports: A=1'0, B=1'1, Y=$614y [0]
+      New connections: $614y [31:1] = { $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] $614y [0] }
+    Consolidated identical input bits for $mux cell $606:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$606y
+      New ports: A=1'0, B=1'1, Y=$606y [0]
+      New connections: $606y [31:1] = { $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] $606y [0] }
+    Consolidated identical input bits for $mux cell $596:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$596y
+      New ports: A=1'0, B=1'1, Y=$596y [0]
+      New connections: $596y [31:1] = { $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] $596y [0] }
+    Consolidated identical input bits for $mux cell $588:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$588y
+      New ports: A=1'0, B=1'1, Y=$588y [0]
+      New connections: $588y [31:1] = { $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] $588y [0] }
+    Consolidated identical input bits for $mux cell $578:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$578y
+      New ports: A=1'0, B=1'1, Y=$578y [0]
+      New connections: $578y [31:1] = { $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] $578y [0] }
+    Consolidated identical input bits for $mux cell $570:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$570y
+      New ports: A=1'0, B=1'1, Y=$570y [0]
+      New connections: $570y [31:1] = { $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] $570y [0] }
+    Consolidated identical input bits for $mux cell $560:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$560y
+      New ports: A=1'0, B=1'1, Y=$560y [0]
+      New connections: $560y [31:1] = { $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] $560y [0] }
+    Consolidated identical input bits for $mux cell $552:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$552y
+      New ports: A=1'0, B=1'1, Y=$552y [0]
+      New connections: $552y [31:1] = { $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] $552y [0] }
+    Consolidated identical input bits for $mux cell $542:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$542y
+      New ports: A=1'0, B=1'1, Y=$542y [0]
+      New connections: $542y [31:1] = { $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] $542y [0] }
+    Consolidated identical input bits for $mux cell $534:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$534y
+      New ports: A=1'0, B=1'1, Y=$534y [0]
+      New connections: $534y [31:1] = { $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] $534y [0] }
+    Consolidated identical input bits for $mux cell $524:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$524y
+      New ports: A=1'0, B=1'1, Y=$524y [0]
+      New connections: $524y [31:1] = { $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] $524y [0] }
+    Consolidated identical input bits for $mux cell $516:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$516y
+      New ports: A=1'0, B=1'1, Y=$516y [0]
+      New connections: $516y [31:1] = { $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] $516y [0] }
+    Consolidated identical input bits for $mux cell $506:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$506y
+      New ports: A=1'0, B=1'1, Y=$506y [0]
+      New connections: $506y [31:1] = { $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] $506y [0] }
+    Consolidated identical input bits for $mux cell $498:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$498y
+      New ports: A=1'0, B=1'1, Y=$498y [0]
+      New connections: $498y [31:1] = { $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] $498y [0] }
+    Consolidated identical input bits for $mux cell $488:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$488y
+      New ports: A=1'0, B=1'1, Y=$488y [0]
+      New connections: $488y [31:1] = { $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] $488y [0] }
+    Consolidated identical input bits for $mux cell $480:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$480y
+      New ports: A=1'0, B=1'1, Y=$480y [0]
+      New connections: $480y [31:1] = { $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] $480y [0] }
+    Consolidated identical input bits for $mux cell $470:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$470y
+      New ports: A=1'0, B=1'1, Y=$470y [0]
+      New connections: $470y [31:1] = { $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] $470y [0] }
+    Consolidated identical input bits for $mux cell $462:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$462y
+      New ports: A=1'0, B=1'1, Y=$462y [0]
+      New connections: $462y [31:1] = { $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] $462y [0] }
+    Consolidated identical input bits for $mux cell $452:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$452y
+      New ports: A=1'0, B=1'1, Y=$452y [0]
+      New connections: $452y [31:1] = { $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] $452y [0] }
+    Consolidated identical input bits for $mux cell $444:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$444y
+      New ports: A=1'0, B=1'1, Y=$444y [0]
+      New connections: $444y [31:1] = { $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] $444y [0] }
+    Consolidated identical input bits for $mux cell $434:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$434y
+      New ports: A=1'0, B=1'1, Y=$434y [0]
+      New connections: $434y [31:1] = { $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] $434y [0] }
+    Consolidated identical input bits for $mux cell $426:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$426y
+      New ports: A=1'0, B=1'1, Y=$426y [0]
+      New connections: $426y [31:1] = { $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] $426y [0] }
+    Consolidated identical input bits for $mux cell $416:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$416y
+      New ports: A=1'0, B=1'1, Y=$416y [0]
+      New connections: $416y [31:1] = { $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] $416y [0] }
+    Consolidated identical input bits for $mux cell $408:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$408y
+      New ports: A=1'0, B=1'1, Y=$408y [0]
+      New connections: $408y [31:1] = { $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] $408y [0] }
+    Consolidated identical input bits for $mux cell $398:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$398y
+      New ports: A=1'0, B=1'1, Y=$398y [0]
+      New connections: $398y [31:1] = { $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] $398y [0] }
+    Consolidated identical input bits for $mux cell $390:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$390y
+      New ports: A=1'0, B=1'1, Y=$390y [0]
+      New connections: $390y [31:1] = { $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] $390y [0] }
+    Consolidated identical input bits for $mux cell $380:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$380y
+      New ports: A=1'0, B=1'1, Y=$380y [0]
+      New connections: $380y [31:1] = { $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] $380y [0] }
+    Consolidated identical input bits for $mux cell $372:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$372y
+      New ports: A=1'0, B=1'1, Y=$372y [0]
+      New connections: $372y [31:1] = { $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] $372y [0] }
+    Consolidated identical input bits for $mux cell $362:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$362y
+      New ports: A=1'0, B=1'1, Y=$362y [0]
+      New connections: $362y [31:1] = { $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] $362y [0] }
+    Consolidated identical input bits for $mux cell $354:
+      Old ports: A=0, B=32'11111111111111111111111111111111, Y=$354y
+      New ports: A=1'0, B=1'1, Y=$354y [0]
+      New connections: $354y [31:1] = { $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] $354y [0] }
+  Optimizing cells in module \scratchpad.
+Performed a total of 32 changes.
+
+2.7.5. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\scratchpad'.
+Computing hashes of 706 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Computing hashes of 694 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Computing hashes of 688 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Computing hashes of 684 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Computing hashes of 681 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Computing hashes of 678 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Computing hashes of 675 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Computing hashes of 672 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+<suppressed ~102 debug messages>
+Removed a total of 34 cells.
+
+2.7.6. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \scratchpad..
+Removed 0 unused cells and 133 unused wires.
+<suppressed ~1 debug messages>
+
+2.7.7. Executing OPT_EXPR pass (perform const folding).
+Optimizing module scratchpad.
+
+2.7.8. Rerunning OPT passes. (Maybe there is more to do..)
+
+2.7.9. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \scratchpad..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~306 debug messages>
+
+2.7.10. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \scratchpad.
+Performed a total of 0 changes.
+
+2.7.11. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\scratchpad'.
+Computing hashes of 672 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Removed a total of 0 cells.
+
+2.7.12. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \scratchpad..
+
+2.7.13. Executing OPT_EXPR pass (perform const folding).
+Optimizing module scratchpad.
+
+2.7.14. Finished fast OPT passes. (There is nothing left to do.)
+
+2.8. Executing WREDUCE pass (reducing word size of cells).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$633 (g_bank[15].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$628 (g_bank[15].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$625 (g_bank[15].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$620 (g_bank[15].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$615 (g_bank[14].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$610 (g_bank[14].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$607 (g_bank[14].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$602 (g_bank[14].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$597 (g_bank[13].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$592 (g_bank[13].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$589 (g_bank[13].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$584 (g_bank[13].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$579 (g_bank[12].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$574 (g_bank[12].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$571 (g_bank[12].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$566 (g_bank[12].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$561 (g_bank[11].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$556 (g_bank[11].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$553 (g_bank[11].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$548 (g_bank[11].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$543 (g_bank[10].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$538 (g_bank[10].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$535 (g_bank[10].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$530 (g_bank[10].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$525 (g_bank[9].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$520 (g_bank[9].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$517 (g_bank[9].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$512 (g_bank[9].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$507 (g_bank[8].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$502 (g_bank[8].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$499 (g_bank[8].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$494 (g_bank[8].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$489 (g_bank[7].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$484 (g_bank[7].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$481 (g_bank[7].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$476 (g_bank[7].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$471 (g_bank[6].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$466 (g_bank[6].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$463 (g_bank[6].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$458 (g_bank[6].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$453 (g_bank[5].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$448 (g_bank[5].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$445 (g_bank[5].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$440 (g_bank[5].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$435 (g_bank[4].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$430 (g_bank[4].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$427 (g_bank[4].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$422 (g_bank[4].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$417 (g_bank[3].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$412 (g_bank[3].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$409 (g_bank[3].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$404 (g_bank[3].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$399 (g_bank[2].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$394 (g_bank[2].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$391 (g_bank[2].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$386 (g_bank[2].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$381 (g_bank[1].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$376 (g_bank[1].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$373 (g_bank[1].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$368 (g_bank[1].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$363 (g_bank[0].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$358 (g_bank[0].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$355 (g_bank[0].mem).
+Removed top 10 address bits (of 14) from memory init port scratchpad.$350 (g_bank[0].mem).
+Removed top 26 bits (of 32) from port B of cell scratchpad.$340 ($div).
+Removed top 17 bits (of 32) from port A of cell scratchpad.$333 ($mod).
+Removed top 28 bits (of 32) from port B of cell scratchpad.$333 ($mod).
+Removed top 28 bits (of 32) from port B of cell scratchpad.$332 ($div).
+Removed top 17 bits (of 32) from port A of cell scratchpad.$331 ($mod).
+Removed top 22 bits (of 32) from port B of cell scratchpad.$331 ($mod).
+Removed top 17 bits (of 32) from port A of cell scratchpad.$330 ($div).
+Removed top 22 bits (of 32) from port B of cell scratchpad.$330 ($div).
+Removed top 26 bits (of 32) from port B of cell scratchpad.$148 ($mod).
+Removed top 2 bits (of 4) from port B of cell scratchpad.$2 ($eq).
+Removed top 17 bits (of 32) from port A of cell scratchpad.$6 ($lt).
+Removed top 19 bits (of 32) from port B of cell scratchpad.$6 ($lt).
+Converting cell scratchpad.$6 ($lt) from signed to unsigned.
+Removed top 1 bits (of 15) from port A of cell scratchpad.$6 ($lt).
+Removed top 1 bits (of 13) from port B of cell scratchpad.$6 ($lt).
+Removed top 2 bits (of 4) from port B of cell scratchpad.$10 ($eq).
+Removed top 17 bits (of 32) from port A of cell scratchpad.$14 ($lt).
+Removed top 19 bits (of 32) from port B of cell scratchpad.$14 ($lt).
+Converting cell scratchpad.$14 ($lt) from signed to unsigned.
+Removed top 1 bits (of 15) from port A of cell scratchpad.$14 ($lt).
+Removed top 1 bits (of 13) from port B of cell scratchpad.$14 ($lt).
+Removed top 2 bits (of 4) from port B of cell scratchpad.$18 ($eq).
+Removed top 17 bits (of 32) from port A of cell scratchpad.$22 ($lt).
+Removed top 19 bits (of 32) from port B of cell scratchpad.$22 ($lt).
+Converting cell scratchpad.$22 ($lt) from signed to unsigned.
+Removed top 1 bits (of 15) from port A of cell scratchpad.$22 ($lt).
+Removed top 1 bits (of 13) from port B of cell scratchpad.$22 ($lt).
+Removed top 2 bits (of 4) from port B of cell scratchpad.$26 ($eq).
+Removed top 17 bits (of 32) from port A of cell scratchpad.$30 ($lt).
+Removed top 19 bits (of 32) from port B of cell scratchpad.$30 ($lt).
+Converting cell scratchpad.$30 ($lt) from signed to unsigned.
+Removed top 1 bits (of 15) from port A of cell scratchpad.$30 ($lt).
+Removed top 1 bits (of 13) from port B of cell scratchpad.$30 ($lt).
+Removed top 2 bits (of 4) from port B of cell scratchpad.$34 ($eq).
+Removed top 17 bits (of 32) from port A of cell scratchpad.$38 ($lt).
+Removed top 19 bits (of 32) from port B of cell scratchpad.$38 ($lt).
+Converting cell scratchpad.$38 ($lt) from signed to unsigned.
+Removed top 1 bits (of 15) from port A of cell scratchpad.$38 ($lt).
+Removed top 1 bits (of 13) from port B of cell scratchpad.$38 ($lt).
+Removed top 2 bits (of 4) from port B of cell scratchpad.$42 ($eq).
+Removed top 17 bits (of 32) from port A of cell scratchpad.$46 ($lt).
+Removed top 19 bits (of 32) from port B of cell scratchpad.$46 ($lt).
+Converting cell scratchpad.$46 ($lt) from signed to unsigned.
+Removed top 1 bits (of 15) from port A of cell scratchpad.$46 ($lt).
+Removed top 1 bits (of 13) from port B of cell scratchpad.$46 ($lt).
+Removed top 2 bits (of 4) from port B of cell scratchpad.$50 ($eq).
+Removed top 17 bits (of 32) from port A of cell scratchpad.$54 ($lt).
+Removed top 19 bits (of 32) from port B of cell scratchpad.$54 ($lt).
+Converting cell scratchpad.$54 ($lt) from signed to unsigned.
+Removed top 1 bits (of 15) from port A of cell scratchpad.$54 ($lt).
+Removed top 1 bits (of 13) from port B of cell scratchpad.$54 ($lt).
+Removed top 28 bits (of 32) from port A of cell scratchpad.$57 ($lt).
+Removed top 28 bits (of 32) from port B of cell scratchpad.$57 ($lt).
+Converting cell scratchpad.$57 ($lt) from signed to unsigned.
+Removed top 1 bits (of 4) from port A of cell scratchpad.$57 ($lt).
+Removed top 1 bits (of 4) from port B of cell scratchpad.$57 ($lt).
+Removed top 1 bits (of 4) from port A of cell scratchpad.$68 ($not).
+Removed top 1 bits (of 561) from mux cell scratchpad.$72 ($mux).
+Removed top 15 bits (of 16) from port A of cell scratchpad.$245 ($shl).
+Removed top 28 bits (of 32) from port B of cell scratchpad.$245 ($shl).
+Removed top 27 bits (of 32) from port A of cell scratchpad.$326 ($lt).
+Converting cell scratchpad.$326 ($lt) from signed to unsigned.
+Removed top 1 bits (of 5) from port A of cell scratchpad.$326 ($lt).
+Removed top 1 bits (of 6) from port B of cell scratchpad.$326 ($lt).
+Removed top 24 bits (of 32) from port B of cell scratchpad.$334 ($mul).
+Removed top 28 bits (of 32) from port B of cell scratchpad.$335 ($mul).
+Removed top 26 bits (of 32) from port B of cell scratchpad.$336 ($mul).
+Removed top 27 bits (of 32) from port B of cell scratchpad.$337 ($add).
+Removed top 28 bits (of 32) from port B of cell scratchpad.$338 ($mul).
+Removed top 18 bits (of 32) from port Y of cell scratchpad.$341 ($add).
+Removed top 18 bits (of 32) from port A of cell scratchpad.$341 ($add).
+Removed top 18 bits (of 32) from port B of cell scratchpad.$341 ($add).
+Removed top 15 bits (of 16) from port A of cell scratchpad.$342 ($shl).
+Removed top 31 bits (of 32) from port A of cell scratchpad.$710 ($add).
+Removed top 31 bits (of 32) from port B of cell scratchpad.$710 ($add).
+Removed top 30 bits (of 32) from port Y of cell scratchpad.$710 ($add).
+Removed top 31 bits (of 32) from port A of cell scratchpad.$711 ($add).
+Removed top 31 bits (of 32) from port B of cell scratchpad.$711 ($add).
+Removed top 30 bits (of 32) from port Y of cell scratchpad.$711 ($add).
+Removed top 31 bits (of 32) from port A of cell scratchpad.$712 ($add).
+Removed top 31 bits (of 32) from port B of cell scratchpad.$712 ($add).
+Removed top 30 bits (of 32) from port Y of cell scratchpad.$712 ($add).
+Removed top 30 bits (of 32) from port A of cell scratchpad.$713 ($add).
+Removed top 30 bits (of 32) from port B of cell scratchpad.$713 ($add).
+Removed top 29 bits (of 32) from port Y of cell scratchpad.$713 ($add).
+Removed top 30 bits (of 32) from port A of cell scratchpad.$714 ($add).
+Removed top 31 bits (of 32) from port B of cell scratchpad.$714 ($add).
+Removed top 29 bits (of 32) from port Y of cell scratchpad.$714 ($add).
+Removed top 29 bits (of 32) from port A of cell scratchpad.$715 ($add).
+Removed top 29 bits (of 32) from port B of cell scratchpad.$715 ($add).
+Removed top 28 bits (of 32) from port Y of cell scratchpad.$715 ($add).
+Removed top 27 bits (of 32) from port A of cell scratchpad.$716 ($le).
+Removed top 30 bits (of 32) from port B of cell scratchpad.$716 ($le).
+Converting cell scratchpad.$716 ($le) from signed to unsigned.
+Removed top 1 bits (of 5) from port A of cell scratchpad.$716 ($le).
+Removed top 1 bits (of 2) from port B of cell scratchpad.$716 ($le).
+Removed top 31 bits (of 32) from port A of cell scratchpad.$717 ($add).
+Removed top 31 bits (of 32) from port B of cell scratchpad.$717 ($add).
+Removed top 30 bits (of 32) from port Y of cell scratchpad.$717 ($add).
+Removed top 31 bits (of 32) from port A of cell scratchpad.$718 ($add).
+Removed top 31 bits (of 32) from port B of cell scratchpad.$718 ($add).
+Removed top 30 bits (of 32) from port Y of cell scratchpad.$718 ($add).
+Removed top 31 bits (of 32) from port A of cell scratchpad.$719 ($add).
+Removed top 31 bits (of 32) from port B of cell scratchpad.$719 ($add).
+Removed top 30 bits (of 32) from port Y of cell scratchpad.$719 ($add).
+Removed top 30 bits (of 32) from port A of cell scratchpad.$720 ($add).
+Removed top 30 bits (of 32) from port B of cell scratchpad.$720 ($add).
+Removed top 29 bits (of 32) from port Y of cell scratchpad.$720 ($add).
+Removed top 30 bits (of 32) from port A of cell scratchpad.$721 ($add).
+Removed top 31 bits (of 32) from port B of cell scratchpad.$721 ($add).
+Removed top 29 bits (of 32) from port Y of cell scratchpad.$721 ($add).
+Removed top 29 bits (of 32) from port A of cell scratchpad.$722 ($add).
+Removed top 29 bits (of 32) from port B of cell scratchpad.$722 ($add).
+Removed top 28 bits (of 32) from port Y of cell scratchpad.$722 ($add).
+Removed top 27 bits (of 32) from port A of cell scratchpad.$723 ($le).
+Removed top 30 bits (of 32) from port B of cell scratchpad.$723 ($le).
+Converting cell scratchpad.$723 ($le) from signed to unsigned.
+Removed top 1 bits (of 5) from port A of cell scratchpad.$723 ($le).
+Removed top 1 bits (of 2) from port B of cell scratchpad.$723 ($le).
+Removed top 31 bits (of 32) from port A of cell scratchpad.$904 ($add).
+Removed top 31 bits (of 32) from port B of cell scratchpad.$904 ($add).
+Removed top 30 bits (of 32) from port Y of cell scratchpad.$904 ($add).
+Removed top 31 bits (of 32) from port A of cell scratchpad.$905 ($add).
+Removed top 31 bits (of 32) from port B of cell scratchpad.$905 ($add).
+Removed top 30 bits (of 32) from port Y of cell scratchpad.$905 ($add).
+Removed top 31 bits (of 32) from port A of cell scratchpad.$906 ($add).
+Removed top 31 bits (of 32) from port B of cell scratchpad.$906 ($add).
+Removed top 30 bits (of 32) from port Y of cell scratchpad.$906 ($add).
+Removed top 30 bits (of 32) from port A of cell scratchpad.$907 ($add).
+Removed top 30 bits (of 32) from port B of cell scratchpad.$907 ($add).
+Removed top 29 bits (of 32) from port Y of cell scratchpad.$907 ($add).
+Removed top 30 bits (of 32) from port A of cell scratchpad.$908 ($add).
+Removed top 31 bits (of 32) from port B of cell scratchpad.$908 ($add).
+Removed top 29 bits (of 32) from port Y of cell scratchpad.$908 ($add).
+Removed top 29 bits (of 32) from port A of cell scratchpad.$909 ($add).
+Removed top 29 bits (of 32) from port B of cell scratchpad.$909 ($add).
+Removed top 28 bits (of 32) from port Y of cell scratchpad.$909 ($add).
+Removed top 27 bits (of 32) from port A of cell scratchpad.$910 ($eq).
+Removed top 30 bits (of 32) from port B of cell scratchpad.$910 ($eq).
+Converting cell scratchpad.$910 ($eq) from signed to unsigned.
+Removed top 1 bits (of 5) from port A of cell scratchpad.$910 ($eq).
+Removed top 1 bits (of 2) from port B of cell scratchpad.$910 ($eq).
+Removed top 10 bits (of 14) from mux cell scratchpad.$procmux$74 ($mux).
+Removed top 10 bits (of 14) from mux cell scratchpad.$procmux$95 ($mux).
+Removed top 10 bits (of 14) from mux cell scratchpad.$procmux$119 ($mux).
+Removed top 10 bits (of 14) from mux cell scratchpad.$procmux$143 ($mux).
+Removed top 10 bits (of 14) from mux cell scratchpad.$procmux$167 ($mux).
+Removed top 10 bits (of 14) from mux cell scratchpad.$procmux$191 ($mux).
+Removed top 10 bits (of 14) from mux cell scratchpad.$procmux$215 ($mux).
+Removed top 10 bits (of 14) from mux cell scratchpad.$procmux$239 ($mux).
+Removed top 1 bits (of 561) from mux cell scratchpad.$71 ($mux).
+Removed top 18 bits (of 32) from port Y of cell scratchpad.$339 ($add).
+Removed top 18 bits (of 32) from port A of cell scratchpad.$339 ($add).
+Removed top 18 bits (of 32) from port B of cell scratchpad.$339 ($add).
+Removed top 10 bits (of 14) from port Y of cell scratchpad.$341 ($add).
+Removed top 10 bits (of 14) from port A of cell scratchpad.$341 ($add).
+Removed top 10 bits (of 14) from port B of cell scratchpad.$341 ($add).
+Removed top 18 bits (of 32) from port Y of cell scratchpad.$335 ($mul).
+Removed top 18 bits (of 32) from port Y of cell scratchpad.$338 ($mul).
+Removed top 10 bits (of 14) from port Y of cell scratchpad.$339 ($add).
+Removed top 10 bits (of 14) from port A of cell scratchpad.$339 ($add).
+Removed top 10 bits (of 14) from port B of cell scratchpad.$339 ($add).
+Removed top 10 bits (of 14) from port Y of cell scratchpad.$335 ($mul).
+Removed top 10 bits (of 14) from port Y of cell scratchpad.$338 ($mul).
+Removed top 28 bits (of 32) from wire scratchpad.$341y.
+Removed top 28 bits (of 32) from wire scratchpad.$339y.
+Removed top 28 bits (of 32) from wire scratchpad.$338y.
+Removed top 28 bits (of 32) from wire scratchpad.$335y.
+Removed top 10 bits (of 14) from wire scratchpad.$pB_addr$307.
+Removed top 10 bits (of 14) from wire scratchpad.$pB_addr$297.
+Removed top 10 bits (of 14) from wire scratchpad.$pB_addr$287.
+Removed top 10 bits (of 14) from wire scratchpad.$pB_addr$277.
+Removed top 10 bits (of 14) from wire scratchpad.$pB_addr$267.
+Removed top 10 bits (of 14) from wire scratchpad.$pB_addr$257.
+Removed top 30 bits (of 32) from wire scratchpad.$710y.
+Removed top 30 bits (of 32) from wire scratchpad.$711y.
+Removed top 30 bits (of 32) from wire scratchpad.$712y.
+Removed top 29 bits (of 32) from wire scratchpad.$713y.
+Removed top 29 bits (of 32) from wire scratchpad.$714y.
+Removed top 28 bits (of 32) from wire scratchpad.$715y.
+Removed top 30 bits (of 32) from wire scratchpad.$717y.
+Removed top 30 bits (of 32) from wire scratchpad.$718y.
+Removed top 30 bits (of 32) from wire scratchpad.$719y.
+Removed top 29 bits (of 32) from wire scratchpad.$720y.
+Removed top 29 bits (of 32) from wire scratchpad.$721y.
+Removed top 28 bits (of 32) from wire scratchpad.$722y.
+Removed top 28 bits (of 32) from wire scratchpad.$909y.
+Removed top 29 bits (of 32) from wire scratchpad.$908y.
+Removed top 29 bits (of 32) from wire scratchpad.$907y.
+Removed top 30 bits (of 32) from wire scratchpad.$906y.
+Removed top 1 bits (of 561) from wire scratchpad.$65y.
+Removed top 1 bits (of 561) from wire scratchpad.$64y.
+Removed top 30 bits (of 32) from wire scratchpad.$905y.
+Removed top 30 bits (of 32) from wire scratchpad.$904y.
+
+2.9. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \scratchpad..
+Removed 0 unused cells and 30 unused wires.
+<suppressed ~1 debug messages>
+
+2.10. Executing MEMORY_COLLECT pass (generating $mem cells).
+
+2.11. Executing OPT pass (performing simple optimizations).
+
+2.11.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module scratchpad.
+
+2.11.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\scratchpad'.
+Computing hashes of 624 cells of `\scratchpad'.
+Finding duplicate cells in `\scratchpad'.
+Removed a total of 0 cells.
+
+2.11.3. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \scratchpad..
+
+2.11.4. Finished fast OPT passes.
+
+2.12. Executing SORT pass.
+
+2.13. Printing statistics.
+
+=== scratchpad ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      568 wires
+    26411 wire bits
+       82 public wires
+    13040 public wire bits
+        6 ports
+     7527 port bits
+      624 cells
+       21   $add
+       11   $aldff
+        5   $and
+        6   $bmux
+        1   $bwmux
+       29   $check
+        2   $demux
+       48   $dff
+        3   $div
+       10   $eq
+        2   $ge
+        2   $le
+      114   $logic_and
+       67   $logic_not
+       44   $logic_or
+       11   $lt
+       16   $mem_v2
+        3   $mod
+        4   $mul
+      195   $mux
+        5   $not
+       19   $or
+        2   $reduce_bool
+        2   $reduce_or
+        2   $shl
+
+2.14. Executing CHECK pass (checking for obvious problems).
+Checking module scratchpad...
+Found and reported 0 problems.
+
+3. Executing MEMORY_MAP pass (converting memories to logic and flip-flops).
+Mapping memory \g_bank[0].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[10].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[11].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[12].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[13].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[14].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[15].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[1].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[2].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[3].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[4].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[5].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[6].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[7].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[8].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+Mapping memory \g_bank[9].mem in module \scratchpad:
+  created 16 $dff cells and 0 static cells of width 32.
+  read interface: 0 $dff and 30 $mux cells.
+  write interface: 32 write mux blocks.
+
+4. Executing HIERARCHY pass (managing design hierarchy).
+Attribute `top' found on module `scratchpad'. Setting top module to scratchpad.
+
+4.1. Analyzing design hierarchy..
+Top module:  \scratchpad
+
+4.2. Analyzing design hierarchy..
+Top module:  \scratchpad
+Removed 0 unused modules.
+Module scratchpad directly or indirectly contains formal properties -> setting "keep" attribute.
+
+5. Executing jny backend.
+
+6. Executing RTLIL backend.
+Output filename: ../model/design.il
+
+End of script. Logfile hash: 25f6fcb791, time: 0.30s, user: 0.28s, system: 0.02s, MEM: 58.79 MB peak
+Yosys 0.70+221 (git sha1 33177a407, Release, GNU /usr/bin/aarch64-linux-gnu-g++ 15.2.0)
+Time spent: 35% 2x check (0 sec), 18% 5x opt_clean (0 sec), ...

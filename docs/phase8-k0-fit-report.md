@@ -105,7 +105,8 @@ attacks the lane-proportional logic, is measured.
 | L1 queues in LUT-RAM | e88d321 | −12 900 (est. −13 k) | 195 234 | 167 % | 196 % |
 | L2 scratchpad clients per the access table, one address per request, readers / writers split | f4afb57 | −31 052 (est. −15 k) | 164 182 | 140 % | 165 % |
 | L3 MMA writeback: 8 adders in two lane halves (converter kept at 8 lanes: 4 lanes cost FA's K = 64 products +15.6 %) | this commit | −5 750 (est. −5 k for the adders) | 158 432 | 135 % | 159 % |
-| K1 row-pipelined DMA engines, `STORE.2D f4.r16` quantiser, block-scaled `LOAD.IDX` (a speed item, not a fit lever: `dma_store` +4.0 k for the egress quantiser, `dma_load` ±0) | K1 commit | +4 064 | 162 496 | 139 % | 163 % |
+| K1 row-pipelined DMA engines, `STORE.2D f4.r16` quantiser, block-scaled `LOAD.IDX` (a speed item, not a fit lever: `dma_store` +4.0 k for the egress quantiser, `dma_load` ±0) | e158d5d | +4 064 | 162 496 | 139 % | 163 % |
+| K2 VEC pad banked by row (E2): the pad's element-serial path for row access to 2-D VEC tiles +3.0 k, the VEC unit's column mode and 16-lane vector register +2.2 k (a speed item: FA −18.9 %) | K2 commit | +5 203 | 167 699 | 143 % | 169 % |
 
 L2 came in at twice its estimate because the ISA table separates readers from
 writers: only 12 of the 35 (pad, client) pairs read and 12 write, so the

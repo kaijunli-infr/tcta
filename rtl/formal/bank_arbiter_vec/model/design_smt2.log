@@ -1,0 +1,75 @@
+
+ /----------------------------------------------------------------------------\
+ |  yosys -- Yosys Open SYnthesis Suite                                       |
+ |  Copyright (C) 2012 - 2026  Claire Xenia Wolf <claire@yosyshq.com>         |
+ |  Distributed under an ISC-like license, type "license" to see terms        |
+ \----------------------------------------------------------------------------/
+ Yosys 0.70+221 (git sha1 33177a407, Release, GNU /usr/bin/aarch64-linux-gnu-g++ 15.2.0)
+
+-- Executing script file `design_smt2.ys' --
+
+1. Executing RTLIL frontend.
+Input filename: design_prep.il
+
+2. Executing HIERARCHY pass (managing design hierarchy).
+Attribute `top' found on module `scratchpad'. Setting top module to scratchpad.
+
+2.1. Analyzing design hierarchy..
+Top module:  \scratchpad
+
+2.2. Analyzing design hierarchy..
+Top module:  \scratchpad
+Removed 0 unused modules.
+Module scratchpad directly or indirectly contains formal properties -> setting "keep" attribute.
+
+3. Executing FORMALFF pass.
+
+4. Executing DFFUNMAP pass (unmap clock enable and synchronous reset from FFs).
+
+5. Printing statistics.
+
+=== scratchpad ===
+
+        +----------Local Count, excluding submodules.
+        | 
+     2379 wires
+    67733 wire bits
+      356 public wires
+    23063 public wire bits
+        6 ports
+     7527 port bits
+     2452 cells
+       22   $add
+      567   $and
+      313   $anyinit
+        9   $anyseq
+       29   $assert
+        1   $assume
+        6   $bmux
+        1   $bwmux
+        2   $demux
+       10   $eq
+        2   $ff
+        2   $ge
+        2   $le
+      114   $logic_and
+       67   $logic_not
+       44   $logic_or
+       11   $lt
+     1209   $mux
+       14   $not
+       19   $or
+        2   $reduce_bool
+        4   $reduce_or
+        2   $shl
+
+6. Executing SMT2 backend.
+
+6.1. Executing BMUXMAP pass.
+
+6.2. Executing DEMUXMAP pass.
+Creating SMT-LIBv2 representation of module scratchpad.
+
+End of script. Logfile hash: 8f207f19e8, time: 0.08s, user: 0.08s, system: 0.01s, MEM: 36.46 MB peak
+Yosys 0.70+221 (git sha1 33177a407, Release, GNU /usr/bin/aarch64-linux-gnu-g++ 15.2.0)
+Time spent: 90% 2x write_smt2 (0 sec), 6% 2x read_rtlil (0 sec), ...

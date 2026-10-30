@@ -1518,3 +1518,110 @@ tests -q` 96 passed (a new test pins the 8×8 program totals to `KV260_L5`).
 4. **DSP budget**: the 8×8 build uses 238 of 1 248 DSP48E2 (19 %), the 16×16
    622 (50 %). Neither is the constraint; block RAM (192 RAMB36 for 144,
    L4's finding) still is for both.
+
+# Phase 8 K2 (erratum E2: the VEC pad banked by row): verdict (2026-10-29)
+
+Per `docs/phase8-gate2-task.md` §1 K2: VEC 2-D slots banked by row; `[64, 1]`
+ops cost `⌈M/16⌉ + overhead`, not `M`; FA's per-KV-tile VEC chain drops from
+~4.6 k toward ~4.2 k cycles.
+
+## Verdict: K2 DONE — `[64, 1]` ops 70–134 → 9–14 cycles, FA −18.9 %, at +5.2 k LUT-eq and one ISA consequence to decide
+
+| | K1 | K2 |
+|---|---|---|
+| VFILL / VMUL imm / VADD vec / VEXP2 on `[64, 1]` | 69 / 70 / 134 / 389 | **9 / 10 / 14 / 29** |
+| VSUB with a column-vector operand, 64×128 | 582 | 522 |
+| VEXP2.SUM 64×64 | 1994 | 1874 |
+| FA (4 KV tiles) | 32109 | **26049 (−18.9 %)**; planning model 27856 (+6.9 %) |
+| vec program | 14910 | 14610 |
+| dma_copy (`[64, 64]` f32 through a 2-D VEC slot) | 2228 | 8396 (element-serial) |
+| `scratchpad_VEC` / `vec_unit` (Yosys) | 5 019 / 53 901 LUT-eq | 8 021 / 56 102 |
+| core | 162 496 LUT-eq (139 % of the K26) | 167 699 (143 %) |
+
+- **Bank map** (`tcta_pkg.sv`, `scratchpad.sv`): element (row, col) of a 2-D
+  VEC slot lives in bank `row mod 16` at word `slot base + col · 4 + row /
+  16` (the slot's word range is unchanged). A *column-slice* request
+  (`col_req`, `req.cs`: rows `rg·16 .. +15` of one column) is one word in
+  every bank, like any other request. A *row-slice* request into that range
+  finds its elements in one bank at one word per column, so the pad serves
+  it element by element on port A over its enabled lanes (`ben` now names
+  the lanes wanted on a read too; 0 = all), grants it with the last element
+  and returns the assembled slice the cycle after; port B keeps serving the
+  other clients and never a second writer. A client that presents a
+  different request mid-burst (dma_load's index read preempts its writer)
+  aborts the burst, which restarts when the request returns (writes are
+  idempotent). Row slots (`[1, 512]`, slots ≥ 8) are untouched.
+- **VEC unit** (`vec_unit.sv`): the `[M, 1]` vector operand is read as one
+  column slice per 16 rows into a 16-lane register (lane = row mod 16; K1
+  read it once per row); an elementwise kind whose tile operands are all
+  2-D VEC tiles (VSUB/VMUL/VADD/VMAX/VNEG/VCOPY/VSEL, the four SFU kinds,
+  VFILL) runs in column-slice order — the sequencer's "row" is the row
+  group, its "slice" the column, so a `[64, 1]` op is 4 slices; row
+  reductions write their result as one element of a column slice. The
+  mixed-shape kinds (VGATE / VSEL / VMASK with an ACC tile and a VEC tile,
+  VCOUNT on a 2-D slot) keep row order and pay the serial path on the VEC
+  side. `dma_store` passes lane masks on its reads so a `[64, 1]` store
+  stays one cycle per row.
+- **Formal**: the arbiter properties were restated for the burst (the
+  top requester holds port A and is granted unless serial; two pure reads
+  both granted unless one is serial; a burst is one client, granted only
+  with its last element, never beside a port-B write) and proved on the
+  default pad (`bank_arbiter.sby`) and on the VEC pad (`bank_arbiter_vec.sby`,
+  `SP_ID = 3`), BMC depth 24, both PASS. A first version failed on an
+  unreachable initial state (the burst's client index at 7 of 7 clients);
+  the index is now range-guarded.
+- **Cycle model** (`cycle.py`): `_vec2d` on the tile refs; the VEC rule
+  gains the column mode (`N · ⌈M/16⌉` slices, VFILL and SFU one less, the
+  vector read `⌈M/16⌉`), the serial cost (`lanes − 1` per row-ordered slice
+  of a 2-D VEC tile) and the reductions' +1; the DMA rule costs a 2-D VEC
+  destination / source `cols + 1` per row (f4.r16: `8 + lanes` per slice)
+  and charges the back end for a gather's skipped rows. Every DMA and VEC
+  row of the seven programs is exact except VCOUNT 1×8 on a 2-D slot (13
+  vs 14); totals within 0.1 % except `loop` (−7.4 %: the DMA's serial bursts
+  and the VEC ops share the VEC pad, and port contention is not in the
+  per-instruction rules).
+- **Cost**: the pad's serial path is 3.0 k LUTs (the per-lane element
+  muxes on the write and the read side and the 512-FF assembly register; a
+  first version at 4.3 k selected the whole request from all seven clients),
+  the VEC unit +2.2 k (the 16-lane vector register's per-row select, the
+  column-request forms). Core 162 496 → 167 699 LUT-eq (143 % of the K26).
+
+Checks: lint clean; `make -C rtl/test all` 10/10 PASS bit-exact (the K1
+traces for INP / WGT / ACC are unchanged: mma 23230, gemm 5917); both sby
+jobs PASS; `calibrate.py` as above; `pytest tests -q` 96 passed (the
+duration test pins VSUB 522 and VROWMAX 523).
+
+## Findings for the main session
+
+1. **E2 makes row-shaped access to a `[M, N > 1]` 2-D VEC tile one cycle per
+   element.** A row slice of a row-banked slot is 16 words of one bank; no
+   single-address bank map serves both a row slice and a column slice of
+   the same tile. The ISA lets such tiles be loaded and stored (`LOAD.2D` /
+   `STORE.2D` into VEC) and used by `VGATE acc, src ∈ VEC` (KDA's per-channel
+   gating), `VSEL` and `VMASK tile`; the `[64, 1]` statistics the erratum
+   targets are unaffected (one element per row either way). Three ways out,
+   for the main session to pick before K5 measures KDA: (a) as built — the
+   pad's serial path, correct everywhere, 16× slower on those accesses and
+   3.0 k LUTs; (b) a skewed map `bank = (row + col) mod 16` with per-bank
+   addresses and lane rotators — both shapes at full rate, ≈ 5 k LUTs, and
+   a departure from E2's text; (c) restrict 2-D VEC tiles to column access
+   (an erratum: `[M, N > 1]` elementwise tiles live in ACC, `VGATE src ∈
+   ACC` exists) and drop the serial path to a single-element translation
+   (≈ −2.4 k of K2's cost).
+2. **The planning model now overestimates FA** (27856 vs 26049, +6.9 %):
+   its SFU rule (4 cycles per slice, `⌈M·N/4⌉`) is slower than the fused
+   VEXP2.SUM at 7 per slice over 16 lanes, and its row-vector and reduction
+   costs are coarser. GEMM stays 4.8 % under. After K3 (SFU 4 per slice)
+   the two should meet; worth re-deriving `KV260_PLAN`'s VEC rule from the
+   K2 structure at K7.
+3. **Pad port contention is a model gap**: a serial DMA burst holds the VEC
+   pad's port A for up to 16 cycles per slice, and a VEC op on the same pad
+   runs at a third of its rate meanwhile (`loop`: VADD 22 → 31, LOAD 4×16
+   103 → 166). Only the `loop` micro-test does this; if (a) stands, the
+   replay's port-hold model should learn burst holds before K5.
+4. **The protocol hazard** found on the way — a client swapping its request
+   while the pad is mid-burst — is closed in the pad (burst abort), but it
+   says the request/grant protocol now has state: a request must be held
+   until granted, which every client does, and the formal jobs assume
+   nothing about it (the properties hold under arbitrary request
+   sequences).

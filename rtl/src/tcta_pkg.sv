@@ -133,6 +133,7 @@ package tcta_pkg;
   typedef struct packed {
     logic              valid;
     logic              we;
+    logic              cs;        // column slice (VEC 2-D slots, erratum E2): rows rg*BANKS .. +BANKS-1 of one column
     sp_t               sp;        // which scratchpad
     logic [11:0]       slot;      // the slot the access belongs to (token checker / debug only)
     logic [SP_AW-1:0]  addr;      // the word address, the same in every bank (a request is one row slice; phase 8 L2
@@ -145,8 +146,30 @@ package tcta_pkg;
   function automatic sp_req_t slice_req(input sp_t sp, input logic [11:0] slot, input int row, input int cg,
                                         input logic we, input logic [BANKS-1:0] ben, input slice_t wdata);
     sp_req_t r;
-    r.valid = 1'b1; r.we = we; r.sp = sp; r.slot = slot; r.ben = ben; r.wdata = wdata;
+    r.valid = 1'b1; r.we = we; r.cs = 1'b0; r.sp = sp; r.slot = slot; r.ben = ben; r.wdata = wdata;
     r.addr = sp_addr(sp, slot, row, cg);
+    return r;
+  endfunction
+
+  // ---- VEC 2-D slots are banked by row (erratum E2, phase 8 K2) ----
+  // Element (row, col) of a 2-D VEC slot lives in bank row % BANKS at word vec_col_addr(slot, col, row / BANKS), so a
+  // [M, 1] vector is BANKS elements per word: a column-slice request (cs = 1) reads or writes rows rg*BANKS .. +BANKS-1
+  // of one column as one word in every bank (lane b = row rg*BANKS + b). A row-slice request into such a slot finds
+  // its elements in one bank at one word per column; the VEC pad serves it element by element (scratchpad.sv). The
+  // slot's word range is the same as before (T_V columns x T_M / BANKS row groups = T_M rows x VEC_CG slices).
+  localparam int VEC_RG = T_M / BANKS;                           // row groups per 2-D VEC column
+  localparam int VEC_2D_WORDS = VEC_ROW_SLOT0 * T_M * VEC_CG;    // the row-banked range of the VEC pad
+  function automatic logic vec_is_2d(input logic [15:0] t);
+    return (tref_sp(t) == SP_VEC) && (int'(tref_slot(t)) < VEC_ROW_SLOT0);
+  endfunction
+  function automatic logic [SP_AW-1:0] vec_col_addr(input logic [11:0] slot, input int col, input int rg);
+    return SP_AW'(int'(slot) * T_M * VEC_CG + col * VEC_RG + rg);
+  endfunction
+  function automatic sp_req_t col_req(input logic [11:0] slot, input int col, input int rg,
+                                      input logic we, input logic [BANKS-1:0] ben, input slice_t wdata);
+    sp_req_t r;
+    r.valid = 1'b1; r.we = we; r.cs = 1'b1; r.sp = SP_VEC; r.slot = slot; r.ben = ben; r.wdata = wdata;
+    r.addr = vec_col_addr(slot, col, rg);
     return r;
   endfunction
 

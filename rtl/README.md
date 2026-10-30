@@ -76,7 +76,19 @@ refused).
 
 **Scratchpads** (`scratchpad.sv`, five instances; INP/WGT 16-bit, the others
 32-bit). Sixteen column banks (`bank = column mod BANKS`, address = slot
-row-base + row + column-group), shared by all slots of the scratchpad. Each
+row-base + row + column-group), shared by all slots of the scratchpad. The
+VEC pad's 2-D slots (`[64, 64]`, slots 0–7) are banked by **row** instead
+(erratum E2, phase 8 K2: `bank = row mod 16`, word = slot base + column ×
+4 + row / 16): a `[M, 1]` vector is 16 elements per word and the VEC unit
+reads and writes it as a *column slice* (`tcta_pkg::col_req`, `req.cs`),
+rows `rg·16 .. +15` of one column, one word in every bank. A row-slice
+request into that range (every DMA access to a 2-D VEC tile, the VEC
+unit's mixed-shape operands) finds its elements in one bank at one word per
+column: port A serves it element by element over its enabled lanes
+(`ben` on a read names the lanes wanted; 0 = all), grants it with the last
+element and returns the assembled slice the cycle after, while port B keeps
+serving the other clients; a client that presents a different request
+mid-burst aborts the burst (it restarts when the request returns). Each
 bank has two ports; the arbiter grants at most two of the seven clients per
 cycle, at most one of them writing, fixed priority MMA A, MMA B (always
 granted, so the array never stalls), MMA writeback, VEC read, VEC write, LOAD,
@@ -84,8 +96,11 @@ STORE; a request is one whole row slice (all banks, one element each) and a
 losing client retries. The MMA's skew makes every operand fetch hit 16
 distinct banks. Each bank is written for block-RAM inference (one process per port, a
 read register per bank and port, `no_rw_check`; J7). Properties (`ifdef FORMAL`): never two writers, at most one
-port per client, the highest-priority requester always granted, two pure
-reads at the top both granted. Per-slot metadata (`rows`, `cols`, `pready`;
+port per client, the highest-priority requester holds port A and is
+granted unless its request is serial, two pure reads at the top both granted,
+a serial burst is one client granted only with its last element and never
+beside a write on port B (`rtl/formal/bank_arbiter.sby` on the default pad,
+`bank_arbiter_vec.sby` on the VEC pad). Per-slot metadata (`rows`, `cols`, `pready`;
 `tile_meta.sv`, three write ports) is what the units read for operand
 shapes, as the simulator's `TileState.valid`.
 

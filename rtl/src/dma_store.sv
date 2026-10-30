@@ -237,7 +237,7 @@ module dma_store
     logic [11:0] slot; int cgl;
     slot = tref_slot(src) + 12'(wide ? (c * BANKS) / T_N : 0);
     cgl = wide ? (c % (T_N / BANKS)) : c;
-    return slice_req(tref_sp(src), slot, row, cgl, 1'b0, '0, '0);
+    return slice_req(tref_sp(src), slot, row, cgl, 1'b0, slice_ben(cols, c), '0);   // ben on a read: the lanes wanted (E2 pad)
   endfunction
 
   int rem_bytes;

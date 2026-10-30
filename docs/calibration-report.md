@@ -21,14 +21,23 @@ rules stay available as `KV260_PLAN` and are unchanged for `CONFIG_C`.
 
 | program | RTL cycles | model, planning (`KV260_PLAN`) | model, calibrated (`KV260`) |
 |---|---|---|---|
-| dma_copy (LOAD f32 64×64, STORE) | 2228 | 2248 (+0.9 %) | 2225 (−0.1 %) |
+| dma_copy (LOAD f32 64×64 into a 2-D VEC tile, STORE; E2: element-serial) | 8396 | 2248 (−73.2 %) | 8393 (−0.0 %) |
 | mma (2 LOAD, 4 MMA forms, VCVT, 2 STORE) | 23230 | 24280 (+4.5 %) | 23228 (−0.0 %) |
-| vec (the FA VEC chain on one tile) | 14910 | 14056 (−5.7 %) | 14907 (−0.0 %) |
+| vec (the FA VEC chain on one tile) | 14610 | 14056 (−3.8 %) | 14608 (−0.0 %) |
 | **gemm** (compiler GEMM, 50×100·100×96) | **5917** | 5633 (−4.8 %) | **5914 (−0.1 %)** |
-| **fa** (compiler FA, 4 KV tiles of 64) | **32109** | 27856 (−13.2 %) | **32108 (−0.0 %)** |
-| loop (front-end micro-test) | 489 | 1096 (+124.1 %) | 490 (+0.2 %) |
-| gather (LOAD.IDX f32 / bf16 / f4.r16 / f4.b32, STORE.IDX, STORE f4.r16 ×3, i32) | 22683 | 17712 (−21.9 %) | 22679 (−0.0 %) |
+| **fa** (compiler FA, 4 KV tiles of 64) | **26049** | 27856 (+6.9 %) | **26040 (−0.0 %)** |
+| loop (front-end micro-test; its VEC tiles are 2-D slots) | 1031 | 1096 (+6.3 %) | 955 (−7.4 %) |
+| gather (LOAD.IDX f32 / bf16 / f4.r16 / f4.b32, STORE.IDX, STORE f4.r16 ×3, i32) | 23089 | 17712 (−23.3 %) | 23085 (−0.0 %) |
 
+Re-measured after phase 8 K2 (2026-10-29, erratum E2: the VEC pad's 2-D slots
+banked by row; `[64, 1]` ops 70–134 → 9–14 cycles, FA 32109 → 26049, vec
+14910 → 14610; `dma_copy`, `loop` and `gather` move `[M, N > 1]` tiles through
+2-D VEC slots and now pay the pad's element-serial row access: 2228 → 8396,
+489 → 1031, 22683 → 23089). Every VEC row is reproduced exactly except
+`VCOUNT 1×8` on a 2-D slot (13 vs 14); `loop`'s −7.4 % is port contention
+between the DMA's serial bursts and the VEC unit on the same pad, which the
+per-instruction rules do not see (§2). The planning model now overestimates
+FA by 6.9 % (its SFU rule) and underestimates GEMM by 4.8 %.
 Re-measured after phase 8 K1 (2026-10-29, the row-pipelined DMA engines:
 dma_copy 4560 → 2228, mma 30512 → 23230, vec 22317 → 14910, gemm 11144 →
 5917, fa 39919 → 32109, loop 814 → 489; `gather` joins the table now that
@@ -42,11 +51,12 @@ the DMA. Earlier: after K0.2 / K0.3 / L1–L3 mma 30512, fa 39919; phase 7 mma
 GEMM and FA are within 10 % (the J5 bar), within 0.2 % in fact, but only
 after the rule changes of §1: with the planning rules the model
 underestimated the v0 core by 28–50 % (phase 7); after K1 the DMA is the
-planned streaming machine and the planning model is within 5–13 %. Per the
+planned streaming machine and after K2 the VEC vectors are, and the planning
+model is within 7 % on both families (FA now 6.9 % *over* the RTL). Per the
 decision rule of the task (§3) that is **PASS-WITH-CAVEATS** for J5; the
-caveat is that the core is still not the planned machine in two places (VEC
-vectors, front end), which §4 quantifies and §5 turns into the RTL work that
-would make it so.
+caveat is that the core is still not the planned machine in two places (the
+SFU's 6 cycles per slice, the front end), which §4 quantifies and §5 turns
+into the RTL work that would make it so.
 
 ## 1. What was measured, parameter by parameter
 
@@ -63,7 +73,8 @@ that produces it (file:line in the right column).
 | structure | one request per LOAD.2D/STORE.2D: `dram_latency_cycles` once, then `bytes / 16` cycles | **two stages per instruction over a row-buffer ring** (`DMA_ROWS_IN_FLIGHT` = 8 records, 128 beats): LOAD's front allocates a row and issues its beats (`S_ROW → S_FETCH`), the writer takes complete rows and writes a slice per cycle (`W_WRITE`); STORE's front reads a slice per cycle (`S_RD`, the response lands in the ring the next cycle), the writer streams beats (`W_BEATS`). Instruction = setup + latency (LOAD) + the longer stage over all rows + the shorter stage once + 1 |
 | LOAD.2D row | — | fetch `beats + 1` (`dma_load_row_overhead`) ‖ write `⌈cols/16⌉ + 1`; block-scaled formats + 2 scale beats |
 | STORE.2D row | — | read `⌈cols/16⌉ + 1` ‖ write `beats + 1` (`dma_store_row_overhead`); `f4.r16`: read `9·⌈cols/16⌉` (`dma_store_r16_slice_cycles`) + scale chunks `⌈⌈cols/16⌉/8⌉` + padding beats + 3 |
-| gathers (`LOAD.IDX`, `STORE.IDX`) | one request per row | + 3 (`dma_idx_slice_cycles`) per index slice (16 rows) and 1 per skipped row on the front; the back end starts after the first index slice; a LOAD fetches the column window (not `row_bytes`) |
+| gathers (`LOAD.IDX`, `STORE.IDX`) | one request per row | + 3 (`dma_idx_slice_cycles`) per index slice (16 rows) and 1 per skipped row on the front; the back end starts after the first index slice (and writes the skipped rows' zero slices); a LOAD fetches the column window (not `row_bytes`) |
+| a 2-D VEC tile as destination / source (erratum E2, K2) | same as any tile | **one cycle per element**: the pad serves a row slice of a row-banked slot element by element, so LOAD's write and STORE's read cost `cols + 1` per row (64×64 f32: 4207 / 4182 cycles, 65 per row; 16×32 i32 store 542; f4.r16 16×32 873: `8 + lanes` per slice). `[M, 1]` vectors cost what they did (one element per row) |
 | rows in flight | 16 (`max_outstanding_rows`) | 8 records (`dma_rows_in_flight`); a row holds its record for latency + fetch + write cycles, which bounds rows shorter than ~4 beats |
 | per instruction | 0 | LOAD 5 (`dma_load_setup_cycles`) + 1 (`dma_tail_cycles`), STORE 4 + 1 (`f4.r16`: + 0) |
 | `dram_latency_cycles` | 100 | 24 = the harness's `+MEMLAT` (the plan's fixed-latency port assumption; not a measured LPDDR) |
@@ -138,24 +149,27 @@ every ~73 cycles (+14 %), as in phase 7, plus the first fill.
 | | planning | measured |
 |---|---|---|
 | elementwise op on an `[M, N]` tile | `⌈M·N/16⌉` | `M · ⌈N/16⌉` slices + **6** (`vec_op_overhead_cycles`; 5 for VFILL, 7 for VROWMAX/VROWSUM) |
-| op on a column vector `[M, 1]` | `⌈M/16⌉` (4 for 64) | **M** (64): the lanes span columns; a column vector is one element per row |
-| op with a row-vector operand (`vec=`, `VSCALE_ACC`) | same as without | **+1 per row** (the vector element is read before the row's slices) |
+| op on a column vector `[M, 1]` (a 2-D VEC tile, erratum E2 / phase 8 K2) | `⌈M/16⌉` (4 for 64) | **`N · ⌈M/16⌉` column slices** (4 for `[64, 1]`): the pad's 2-D VEC slots are banked by row and an elementwise op whose tiles are all 2-D VEC tiles runs in column-slice order (VFILL and the SFU kinds one less). K1: **M** (64, one element per row) |
+| op with a row-vector operand (`vec=`, `VSCALE_ACC`) | same as without | **+1 per 16 rows** (the vector's column slice; K1: +1 per row); VEXP2.SUM +2 per 16 rows |
+| a 2-D VEC tile read in row order (VGATE / VSEL / VMASK with a VEC tile, VCOUNT on a 2-D slot) | one slice per 16 columns | **one cycle per element** (the pad's serial path): `lanes − 1` extra per slice; VCOUNT 1×8 measured 13 (rule: 14). No family program does this (KDA's gating tile would) |
 | SFU op (VEXP2, VRCP, VLOG2, VSIGMOID) | `⌈M·N/4⌉` (4 cycles per slice) | **6 cycles per slice** (`sfu_slice_cycles`: issue, return, 4 lane steps; one slice in flight), the row-vector read overlapped |
 | VEXP2.SUM | 3 passes unfused (12 per slice) | **fused, one pass**: 7 per slice + 3 per row (`sfu_fused_sub_sum = True`, `sfu_sum_slice_extra = 1`, `sfu_sum_row_extra = 1`: the partial add on the lane ALUs since K0.2) |
-| row reductions (VROWMAX, VROWSUM, VEXP2.SUM) | — | **+4 at the end** (`vec_reduce_extra`): the shared four-cycle reducer of K0.2 (8 adders, level 0 in the fire cycle); rows of ≥ 4 slices stream without a stall since the last slice is issued when the reducer frees by the time it returns |
+| row reductions (VROWMAX, VROWSUM, VEXP2.SUM) | — | **+4 at the end** (`vec_reduce_extra`; VROWMAX / VROWSUM + 1 since K2: the last result's column-element write): the shared four-cycle reducer of K0.2 (8 adders, level 0 in the fire cycle); rows of ≥ 4 slices stream without a stall since the last slice is issued when the reducer frees by the time it returns |
 
 | instruction | RTL | calibrated | planning |
 |---|---|---|---|
 | VADD/VMUL/VNEG/VCOPY/VCVT imm, 64×128 | 518 | 518 | 512 |
-| VROWMAX / VROWSUM 64×128 | 523 | 522 | 512 |
-| VSUB vec / VSCALE_ACC 64×128 | 582 | 582 | 512 |
-| VFILL 64×1 | 69 | 70 | 4 |
-| VMAX / VADD / VSUB with a column-vector operand, 64×1 | 134 | 134 | 4 |
-| VMUL imm / VCOPY 64×1 | 70 | 70 | 4 |
-| VEXP2 64×1 (vec subtrahend) / VRCP 64×1 | 389 | 390 | 16 |
-| VEXP2.SUM 64×64 | 1994 | 1994 | 3072 |
-| VROWMAX / VMUL / VCVT / VFILL 64×64 | 267 / 262 / 262 / 261 | 266 / 262 / 262 / 262 | 256 |
-| VSCALE_ACC 64×64 | 326 | 326 | 256 |
+| VROWMAX / VROWSUM 64×128 | 523 | 523 | 512 |
+| VSUB vec / VSCALE_ACC 64×128 (K1: 582) | 522 | 522 | 512 |
+| VFILL 64×1 (K1: 69) | 9 | 9 | 4 |
+| VMAX / VADD / VSUB with a column-vector operand, 64×1 (K1: 134) | 14 | 14 | 4 |
+| VMUL imm / VCOPY 64×1 (K1: 70) | 10 | 10 | 4 |
+| VEXP2 64×1 (vec subtrahend) / VRCP 64×1 (K1: 389) | 29 | 29 | 16 |
+| VEXP2.SUM 64×64 (K1: 1994) | 1874 | 1874 | 3072 |
+| VROWMAX / VMUL / VCVT / VFILL 64×64 | 267 / 262 / 262 / 261 | 267 / 262 / 262 / 261 | 256 |
+| VSCALE_ACC 64×64 (K1: 326) | 266 | 266 | 256 |
+| VADD imm / VFILL on a `[1, 16]` 2-D VEC tile (loop; 16 column slices) | 22 / 21 (up to 31 under DMA contention) | 22 / 21 | 1 |
+| VCOUNT on a `[1, 8]` 2-D VEC tile (loop; serial read) | 13 | 14 | 1 |
 
 ### 1.4 Front end, queues and tokens (`front_end.sv`, `queue.sv`, `token_net.sv`)
 
@@ -212,7 +226,14 @@ array), COMM link values (not built).
 - **Formulas from the FSMs, not from a run**: `VTOPK` (k passes), `VGATE`,
   `VMASK`, `VSEL`. Phase 8 K5 (MoE/MLA/KDA on RTL) measures them. The
   gathers and the dequant formats are measured since K1 (§1.1, the `gather`
-  program).
+  program); the mixed-shape VEC kinds on a 2-D VEC tile (VGATE / VSEL /
+  VMASK tile) take the pad's serial-path cost from the FSM (K2, §1.3).
+- **Pad port contention is not in the rules**: a DMA row access to a 2-D VEC
+  tile holds the pad's port A for up to 16 cycles per slice (K2's serial
+  path); a VEC op on the same pad meanwhile runs at a third of its rate
+  (`loop`: VADD 22 → up to 31, LOAD 4×16 103 → up to 166). Only `loop` does
+  this (−7.4 % on its total); the families keep their vectors and their DMA
+  on different pads.
 - **Memory latency** is the harness's 24 cycles; since K1 it is paid once
   per LOAD instruction, not per row, so a real LPDDR port changes the DMA
   numbers of §1.1 by its latency once per instruction (plus the rows-in-flight
@@ -238,12 +259,16 @@ reproduce; the calibrated descriptor is `tcta.timing.KV260`.
    (14.5 and 13.4 B/cycle, a 64×128 BF16 tile 3205 → 1127 cycles) and the
    families followed: GEMM 11144 → 5917, FA 39919 → 32109. What remains of
    the gap to 16 B/cycle is one cycle per row.
-2. **Column-vector VEC ops cost M cycles, not ⌈M/16⌉**: a consequence of
+2. **Column-vector VEC ops cost M cycles, not ⌈M/16⌉** — a consequence of
    the §11 column banking (a column vector lives in one bank), not of the
-   VEC pipe. FA's per-KV-tile VEC chain is 4581 RTL cycles against 4156
-   planned, the vector ops (VMAX, VADD, VSUB, VMUL on `[64, 1]`, VEXP2 and
-   VRCP on `[64, 1]`) accounting for ~1500 of it. The fused VEXP2.SUM (1927
-   vs 3072 planned) hides most of that in FA's total.
+   VEC pipe — **fixed by K2 (erratum E2)**: the VEC pad's 2-D slots are
+   banked by row, the `[64, 1]` ops cost 9–14 cycles (were 70–134), the
+   vector operand is read once per 16 rows, and FA went 32109 → 26049
+   (−18.9 %; the per-tile VEC chain's instruction durations sum to 3.2 k,
+   were 4.9 k). The price: row-shaped access to a 2-D VEC tile with more
+   than one column is one element per cycle (DMA LOAD / STORE of such
+   tiles, VGATE / VSEL / VMASK with a VEC tile), and the pad's serial path
+   plus the VEC unit's column mode cost 5.2 k LUT-eq.
 3. **The SFU is 6 cycles per slice, not 4**: one slice in flight through
    the 4-lane pipe. Pipelining slices (the lanes are idle 2 of 6 cycles) is
    a −33 % on every SFU op; VEXP2.SUM is 42 % of FA's VEC time on RTL.

@@ -306,20 +306,20 @@ class CycleMachine(Machine):
             nb = dt.row_bytes_for(r.dtype, cols)
             if r.dtype in ("f4.b32", "f8.b32"):
                 nb += cols // 32
-            inf.update(rows=rows, cols=cols, bytes=rows * nb, dtype=r.dtype, requests=1)
+            inf.update(rows=rows, cols=cols, bytes=rows * nb, dtype=r.dtype, requests=1, vec2d=_vec2d(a["dst"]))
         elif op == "LOAD.IDX":
             its = self.sp[a["idx"]]
             n = a["nrows"]
             idx = its.data[0, :n]
             live = int((idx != -1).sum())
             inf.update(rows=live, nrows=n, cols=a["cols_valid"], row_bytes=a["row_bytes"], bytes=live * a["row_bytes"],
-                       dtype=a["region"].dtype, gather=True, col0=a.get("col0", 0))
+                       dtype=a["region"].dtype, gather=True, col0=a.get("col0", 0), vec2d=_vec2d(a["dst"]))
         elif op == "STORE.2D":
             r = a["region"]
             el = {"f32": 4, "i32": 4, "bf16": 2}.get(r.dtype, 1)
             rows, cols = a["rows_valid"], a["cols_valid"]
             nb = dt.pad64(cols // 2 + cols // 16) if r.dtype == "f4.r16" else cols * el      # Appendix A: a 64 B-padded row
-            inf.update(rows=rows, cols=cols, bytes=rows * nb, dtype=r.dtype, requests=1)
+            inf.update(rows=rows, cols=cols, bytes=rows * nb, dtype=r.dtype, requests=1, vec2d=_vec2d(a["src"]))
         elif op == "STORE.IDX":
             its = self.sp[a["idx"]]
             r = a["region"]
@@ -327,7 +327,8 @@ class CycleMachine(Machine):
             live = int((its.data[0, :n] != -1).sum())
             el = {"f32": 4, "i32": 4, "bf16": 2}.get(r.dtype, 1)
             rb = dt.pad64(a["cols_valid"] * el)
-            inf.update(rows=live, nrows=n, cols=a["cols_valid"], row_bytes=rb, bytes=live * rb, dtype=r.dtype, gather=True)
+            inf.update(rows=live, nrows=n, cols=a["cols_valid"], row_bytes=rb, bytes=live * rb, dtype=r.dtype, gather=True,
+                       vec2d=_vec2d(a["src"]))
         elif op in ("SEND", "RECV"):
             t = self.sp[a.get("src", a.get("dst"))]
             inf.update(bytes=t.valid[0] * t.valid[1] * 4)
@@ -431,6 +432,15 @@ def _slices(n: int, lanes: int) -> int:
     return -(-n // lanes) if n > 0 else 0
 
 
+_VEC_ROW_SLOT0 = 8      # VEC slots below this are [T_M, T_V] 2-D tiles, banked by row (erratum E2; tcta_pkg::VEC_ROW_SLOT0)
+
+
+def _vec2d(t) -> bool:
+    """A 2-D VEC tile (erratum E2: banked by row). A row-slice access to one is served element by element by the
+    pad (phase 8 K2, scratchpad.sv): the DMA engines and the VEC unit's mixed-shape operands pay one cycle per lane."""
+    return isinstance(t, TRef) and t.sp == SP.VEC and t.slot < _VEC_ROW_SLOT0
+
+
 def _rtl_dma_cycles(T: DeviceTiming, q: Q, inf: dict) -> int:
     """Row-pipelined DMA engines (phase 8 K1): two stages per instruction, a front (LOAD: issue the row's beats; STORE:
     read and convert its slices) and a back end (LOAD: write the slices; STORE: write the beats), overlapped across
@@ -440,8 +450,11 @@ def _rtl_dma_cycles(T: DeviceTiming, q: Q, inf: dict) -> int:
     slice every 16 rows (dma_idx_slice_cycles) and spends one cycle per skipped (-1) row; its back end starts after
     the first index slice. A LOAD fetches the column window it writes (not row_bytes) plus two scale beats for the
     block-scaled formats. An f4.r16 store quantises a slice in dma_store_r16_slice_cycles and ends each row with its
-    scale chunks (one per 8 slices), the open beat and the zero padding to 64 B."""
+    scale chunks (one per 8 slices), the open beat and the zero padding to 64 B. A 2-D VEC tile (E2, row-banked) is
+    written or read one element per cycle: its slices cost their lanes (cols per row) instead of one cycle each; a
+    gather's skipped rows write their zero slices too (back = nrows * write)."""
     rows, cols = inf.get("rows", 0), inf.get("cols", 0)
+    vec2d = bool(inf.get("vec2d"))
     bpc = T.bytes_per_cycle_per_channel
     ncg = _slices(cols, T.vec_lanes)
     gather = bool(inf.get("gather"))
@@ -456,11 +469,11 @@ def _rtl_dma_cycles(T: DeviceTiming, q: Q, inf: dict) -> int:
             data_bytes = cols * {"bf16": 2, "f32": 4, "i32": 4}.get(dtype, 1)
         beats = -(-data_bytes // bpc) + (2 if dtype in ("f4.b32", "f8.b32", "f4.r16") else 0)
         fetch = beats + T.dma_load_row_overhead
-        write = ncg + 1
+        write = (cols if vec2d else ncg) + 1
         hold = T.dram_latency_cycles + fetch + write
         per_front = max(fetch, -(-hold // T.dma_rows_in_flight))
         front = rows * per_front + front_extra
-        back = rows * write + idx
+        back = n * write + idx
         return T.dma_load_setup_cycles + T.dram_latency_cycles + max(front, back) + min(fetch, write) + T.dma_tail_cycles
     if dtype == "f4.r16":
         row_bytes = dt.pad64(cols // 2 + cols // 16)
@@ -469,11 +482,12 @@ def _rtl_dma_cycles(T: DeviceTiming, q: Q, inf: dict) -> int:
     else:
         row_bytes = inf.get("bytes", 0) // rows if rows else 0
     beats = -(-row_bytes // bpc)
+    serial = (cols - ncg) if vec2d else 0                            # a row-banked slice read costs its lanes, not 1
     if dtype == "f4.r16":
         data_beats = -(-(cols // 2 + ncg) // bpc)
-        read = ncg * T.dma_store_r16_slice_cycles + _slices(ncg, 8) + 1 + (beats - data_beats) + 2
+        read = ncg * T.dma_store_r16_slice_cycles + serial + _slices(ncg, 8) + 1 + (beats - data_beats) + 2
     else:
-        read = ncg + 1
+        read = ncg + 1 + serial
     write = beats + T.dma_store_row_overhead
     hold = read + write
     per_front = max(read, -(-hold // T.dma_rows_in_flight))
@@ -483,29 +497,70 @@ def _rtl_dma_cycles(T: DeviceTiming, q: Q, inf: dict) -> int:
     return T.dma_store_setup_cycles + max(front, back) + min(read, write) + tail
 
 
+_CS_OPS = ("VSUB", "VMUL", "VADD", "VMAX", "VNEG", "VCOPY", "VSEL", "VEXP2", "VRCP", "VLOG2", "VSIGMOID", "VFILL")
+_SFU_ROW_OPS = ("VEXP2", "VRCP", "VLOG2", "VSIGMOID")
+
+
+def _vec_tiles(op: str, args: dict) -> list:
+    """The tile operands an op streams over (the row vector `vec` aside)."""
+    keys = {"VCOPY": ("dst", "src"), "VSEL": ("dst", "a", "b", "mask"), "VFILL": ("dst",), "VCOUNT": ("idx",),
+            "VGATE": ("acc", "vec"), "VMASK": ("acc", "vec"), "VSCALE_ACC": ("acc",), "VCVT": ("dst", "src"),
+            "VROWMAX": ("dst", "src"), "VROWSUM": ("dst", "src"), "VEXP2.SUM": ("t", "dst"), "VTOPK": ("src",)}.get(op, ("src", "t"))
+    return [args[k] for k in keys if isinstance(args.get(k), TRef)]
+
+
 def _rtl_vec_cycles(T: DeviceTiming, op: str, M: int, N: int, args: dict) -> int:
-    """One [row, 16-column] slice per operand read per cycle; a row-vector operand one read per row; SFU ops hold
-    the slice for sfu_slice_cycles; VEXP2.SUM one more per slice plus its row-vector read, row-sum write and the
-    partial add (sfu_sum_row_extra); row reductions end vec_reduce_extra cycles after their last slice (the shared
-    four-cycle reducer, phase 8 K0.2); VTOPK k passes over the row; per-instruction overhead."""
+    """One [row, 16-column] slice per operand read per cycle; SFU ops hold the slice for sfu_slice_cycles; VEXP2.SUM one
+    more per slice plus the partial add (sfu_sum_row_extra); row reductions end vec_reduce_extra cycles after their
+    last slice (the shared four-cycle reducer, phase 8 K0.2) plus the column-element write of the last result; VTOPK
+    k passes over the row; per-instruction overhead.
+
+    Erratum E2 (phase 8 K2): a 2-D VEC vector operand is read as a column slice once per 16 rows (not once per row);
+    an elementwise op whose tile operands are all 2-D VEC tiles runs in column-slice order (N * ceil(M / 16) slices:
+    a [64, 1] op is 4 slices); a 2-D VEC tile read in row order (VGATE / VSEL / VMASK with a VEC tile, VCOUNT on a 2-D
+    slot) is served one element per cycle by the pad (lanes - 1 extra per slice; the VCOUNT 1x8 case measures 13
+    against this rule's 14)."""
     L = T.vec_lanes
     ncg = _slices(N, L)
-    has_vec = isinstance(args.get("vec"), TRef)
-    if op in ("VEXP2", "VRCP", "VLOG2", "VSIGMOID"):
-        per_row = ncg * T.sfu_slice_cycles                       # the row-vector read overlaps the SFU steps
+    n_rg = _slices(M, L)
+    vec_t = args.get("vec")
+    has_vec = isinstance(vec_t, TRef) or op == "VSCALE_ACC"
+    tiles = _vec_tiles(op, args)
+    if op == "VMASK" and isinstance(vec_t, TRef):
+        has_vec = False                                              # tile mask: a tile operand, not a row vector
+    if op in ("VGATE", "VSCALE_ACC"):
+        has_vec = op == "VSCALE_ACC"                                 # VGATE's "vec" is the gate tile
+    vec_reads = (n_rg if _vec2d(vec_t) or op == "VSCALE_ACC" else M) if has_vec else 0
+    if op == "VSCALE_ACC" and args.get("wide"):
+        vec_reads *= 4                                               # re-read at every slot
+    cs = op in _CS_OPS and bool(tiles) and all(_vec2d(t) for t in tiles)
+    if cs:
+        slices = N * n_rg
+        if op in _SFU_ROW_OPS:
+            return T.vec_op_overhead_cycles + slices * T.sfu_slice_cycles - 1       # the vector read overlaps the steps
+        if op == "VFILL":
+            return T.vec_op_overhead_cycles + slices - 1
+        reads = 3 if op == "VSEL" else 1
+        return T.vec_op_overhead_cycles + slices * reads + vec_reads
+    # row order: a 2-D VEC tile among the tile operands is read element by element
+    serial = sum((N - ncg) for t in tiles if _vec2d(t) and op not in ("VROWMAX", "VROWSUM", "VEXP2.SUM"))
+    if op in _SFU_ROW_OPS:
+        per_row = ncg * T.sfu_slice_cycles + serial                  # the row-vector read overlaps the SFU steps
+        vec_reads = 0
     elif op == "VEXP2.SUM":
-        per_row = ncg * (T.sfu_slice_cycles + T.sfu_sum_slice_extra) + 2 + T.sfu_sum_row_extra
+        per_row = ncg * (T.sfu_slice_cycles + T.sfu_sum_slice_extra) + T.sfu_sum_row_extra
+        vec_reads *= 2
     elif op == "VTOPK":
         per_row = int(args.get("k", 1)) * (ncg + 1)
     else:
         reads = {"VFILL": 1, "VSEL": 3, "VGATE": 2}.get(op, 1)   # VFILL: one write per slice
-        if op == "VMASK" and isinstance(args.get("vec"), TRef):
-            reads, has_vec = 2, False                            # tile mask: mask slice + acc slice
-        if op == "VSCALE_ACC":
-            has_vec = True
-        per_row = reads * ncg + (1 if has_vec else 0)
-    extra = T.vec_reduce_extra if op in ("VROWMAX", "VROWSUM", "VEXP2.SUM") else 0   # the shared row reducer's levels
-    return T.vec_op_overhead_cycles + M * per_row + extra
+        if op == "VMASK" and isinstance(vec_t, TRef):
+            reads = 2                                                # tile mask: mask slice + acc slice
+        per_row = reads * ncg + serial
+    extra = T.vec_reduce_extra + 1 if op in ("VROWMAX", "VROWSUM") else T.vec_reduce_extra if op == "VEXP2.SUM" else 0
+    if op == "VFILL":
+        extra -= 1
+    return T.vec_op_overhead_cycles + M * per_row + vec_reads + extra
 
 
 def _rtl_mma_cycles(T: DeviceTiming, M: int, K: int, N: int, accumulate: bool, masked: bool,

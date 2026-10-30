@@ -13,6 +13,13 @@
 // reducer on RED_W = L/2 adders (level n pairs adjacent partials, the E1 order); its row write is held until
 // the write FIFO takes it, and a row's last slice is issued only when the reducer is free by the time the slice
 // returns (never stalls for n_cg >= 4; K0.2's rule blocked while busy and cost 3 cycles per row at n_cg = 4). v0 had 95 adders, 36 multipliers and 47 comparators in this unit (122 k LUTs).
+//
+// Phase 8 K2 (erratum E2, VEC 2-D slots banked by row): the row-vector operand (a [M, 1] VEC column) is read as a
+// column slice once per BANKS rows (rowvec_q, lane = row % BANKS) instead of once per row, and an elementwise kind
+// whose tile operands are all 2-D VEC tiles runs in column-slice order (cs_mode: the sequencer's "row" is the row
+// group, its "slice" the column; a [64, 1] op is 4 slices, not 64). Row reductions write their result as one element
+// of a column slice. Mixed-shape kinds (an ACC tile with a 2-D VEC tile: VGATE, VSEL, VMASK tile) keep row order and
+// pay the pad's element-serial access on the VEC side.
 module vec_unit
   import tcta_isa_pkg::*;
   import tcta_pkg::*;
@@ -65,12 +72,14 @@ module vec_unit
   } kind_t;
   typedef enum logic [3:0] {S_IDLE, S_SETUP, S_RUN, S_META, S_META2, S_REG, S_DONE, S_FAULT} state_t;
   typedef struct packed { logic vec; logic [1:0] op; logic last; logic [9:0] row; logic [5:0] cg; logic [2:0] slot; logic [6:0] pass; } tag_t;
-  typedef struct packed { sp_t sp; logic [11:0] slot; logic [9:0] row; logic [5:0] cg; logic [L-1:0] ben; slice_t data; } wreq_t;
+  typedef struct packed { logic cs; sp_t sp; logic [11:0] slot; logic [9:0] row; logic [5:0] cg; logic [L-1:0] ben; slice_t data; } wreq_t;
 
   state_t st;
   instr_t cur;
   kind_t  kind;
   logic   is_sfu, is_red, use_vec, use_imm, has_val, has_base, inplace, row_vec, write_slice;
+  logic   cs_mode, vec_cs, dst_2d;              // E2: column-slice order; the vector operand is a 2-D VEC column; the dst is one
+  int     n_rg;                                 // row groups of M rows
   logic [15:0] t_src, t_dst, t_vec, t_aux, t_val;
   int     M, N, n_cg, r0, kk, n_pass, width_b, n_ops, n_slots;
   logic signed [15:0] q_off, k_off;
@@ -91,7 +100,7 @@ module vec_unit
   tag_t   rtag;
   logic   rsp_last;
   slice_t op0, op1, partial, partial_base, red_in, sfu_slice, acc_slice, exp_part_in, result, exp2_arg, x, v_bcast, g;
-  logic [31:0] rowvec;
+  slice_t rowvec_q, vrow;                      // the vector operand's column slice; the per-lane vector value of the returned slice
   logic [L-1:0] result_ben; logic result_push;
   int     sfu_step; logic sfu_busy, sfu_mode; tag_t sfu_tag; logic exp_sum_pending;
   logic   red_fire; logic [9:0] red_row;
@@ -196,7 +205,9 @@ module vec_unit
     if (st == S_RUN && !s_done && (n_ops > 0 || s_vec_pending) && can_issue) begin
       logic [11:0] sl;
       sl = tref_slot(rd_tile) + 12'((kind == K_SCALE && !s_vec_pending) ? s_slot : 0);
-      rd_req = slice_req(tref_sp(rd_tile), sl, rd_row, rd_cg, 1'b0, '0, '0);
+      if (s_vec_pending && vec_cs) rd_req = col_req(sl, 0, cs_mode ? s_row : s_row / BANKS, 1'b0, '0, '0);     // the vector's rows of this group
+      else if (cs_mode)            rd_req = col_req(sl, s_cg, s_row, 1'b0, slice_ben(M, s_row), '0);           // column s_cg, row group s_row
+      else rd_req = slice_req(tref_sp(rd_tile), sl, rd_row, rd_cg, 1'b0, s_vec_pending ? L'(1) : slice_ben(Nk, rd_cg), '0);
     end
     // tag of the read issued this cycle
     tag_in = '0;
@@ -214,8 +225,8 @@ module vec_unit
     wo_push = (st == S_RUN) && !s_done && (n_ops == 0) && (wq_cnt < WQ) && !topk_push &&
               (kind == K_FILL || kind == K_MASK_CAUSAL || kind == K_MASK_BAND);
     wo_in = '0;
-    wo_in.sp = tref_sp(t_dst); wo_in.slot = tref_slot(t_dst); wo_in.row = 10'(s_row); wo_in.cg = 6'(s_cg);
-    wo_in.ben = slice_ben(N, s_cg) & mask_ben;
+    wo_in.cs = cs_mode; wo_in.sp = tref_sp(t_dst); wo_in.slot = tref_slot(t_dst); wo_in.row = 10'(s_row); wo_in.cg = 6'(s_cg);
+    wo_in.ben = (cs_mode ? slice_ben(M, s_row) : slice_ben(N, s_cg)) & mask_ben;
     for (int b = 0; b < L; b++) wo_in.data[b] = (kind == K_FILL) ? imm : NEG_INF;
   end
 
@@ -238,7 +249,8 @@ module vec_unit
     rtag = tagq[0];
     rsp_last = rd_rvalid && !rtag.vec && rtag.last;
     x = rd_rdata; g = op0;
-    for (int b = 0; b < L; b++) v_bcast[b] = use_imm ? imm : rowvec;
+    for (int b = 0; b < L; b++) vrow[b] = cs_mode ? rowvec_q[b] : rowvec_q[vec_cs ? int'(rtag.row[3:0]) : 0];
+    for (int b = 0; b < L; b++) v_bcast[b] = use_imm ? imm : vrow[b];
     // reduction input with invalid columns neutralised; partial base restarts at the identity after a row fires
     for (int b = 0; b < L; b++) begin
       logic valid_col; valid_col = (int'(rtag.cg) * L + b) < N;
@@ -271,7 +283,7 @@ module vec_unit
       end
       K_EXP2, K_EXP2_SUM: begin
         if (exp_sum_pending) for (int b = 0; b < L; b++) begin add_a[b] = partial_base[b]; add_b[b] = exp_part_in[b]; end
-        else begin add_sub = 1'b1; for (int b = 0; b < L; b++) add_b[b] = rowvec; end      // exp2 argument x - vec[r]
+        else begin add_sub = 1'b1; for (int b = 0; b < L; b++) add_b[b] = vrow[b]; end     // exp2 argument x - vec[r]
       end
       default: ;
     endcase
@@ -279,7 +291,7 @@ module vec_unit
   end
   always_comb begin
     // one-shot slice result
-    result = rd_rdata; result_ben = slice_ben(N, int'(rtag.cg)); result_push = 1'b0;
+    result = rd_rdata; result_ben = cs_mode ? slice_ben(M, int'(rtag.row)) : slice_ben(N, int'(rtag.cg)); result_push = 1'b0;
     case (kind)
       K_SUB, K_ADD, K_GATE_ADD: for (int b = 0; b < L; b++) result[b] = l_sum[b];
       K_MUL, K_SCALE, K_GATE_MUL: for (int b = 0; b < L; b++) result[b] = l_prod_all[b];
@@ -312,17 +324,20 @@ module vec_unit
       red_b[n] = red_fire ? partial[2*n+1] : red_reg[2*n+1];
     end
     // ---- write FIFO inputs ----
-    rsp_w = '0; rsp_w.sp = tref_sp(t_dst); rsp_w.slot = tref_slot(t_dst) + 12'(kind == K_SCALE ? int'(rtag.slot) : 0);
+    rsp_w = '0; rsp_w.cs = cs_mode; rsp_w.sp = tref_sp(t_dst); rsp_w.slot = tref_slot(t_dst) + 12'(kind == K_SCALE ? int'(rtag.slot) : 0);
     rsp_w.row = 10'(int'(rtag.row) + r0); rsp_w.cg = rtag.cg; rsp_w.ben = result_ben; rsp_w.data = result;
     rsp_w_push = result_push && write_slice;
-    sfu_w = '0;
+    sfu_w = '0; sfu_w.cs = cs_mode;
     sfu_w.sp = (kind == K_EXP2_SUM) ? tref_sp(t_src) : tref_sp(t_dst);
     sfu_w.slot = (kind == K_EXP2_SUM) ? tref_slot(t_src) : tref_slot(t_dst);
-    sfu_w.row = sfu_tag.row; sfu_w.cg = sfu_tag.cg; sfu_w.ben = slice_ben(N, int'(sfu_tag.cg));
+    sfu_w.row = sfu_tag.row; sfu_w.cg = sfu_tag.cg; sfu_w.ben = cs_mode ? slice_ben(M, int'(sfu_tag.row)) : slice_ben(N, int'(sfu_tag.cg));
     for (int b = 0; b < L; b++) sfu_w.data[b] = sfu_slice[b];
     for (int b = 0; b < SFU_LANES; b++) sfu_w.data[sfu_step * SFU_LANES + b] = sfu_out[b];
     sfu_w_push = sfu_busy && (sfu_step == SFU_STEPS - 1) && write_slice;
-    row_w = '0; row_w.sp = tref_sp(t_dst); row_w.slot = tref_slot(t_dst); row_w.row = red_row_d; row_w.cg = 0; row_w.ben = L'(1);
+    // the row result: element row % BANKS of column 0's row group (dst_2d), or lane 0 of row red_row_d
+    row_w = '0; row_w.cs = dst_2d; row_w.sp = tref_sp(t_dst); row_w.slot = tref_slot(t_dst); row_w.cg = 0;
+    row_w.row = dst_2d ? 10'(int'(red_row_d) / BANKS) : red_row_d;
+    row_w.ben = dst_2d ? (L'(1) << (int'(red_row_d) % BANKS)) : L'(1);
     for (int b = 0; b < L; b++) row_w.data[b] = red_result;
     row_w_push = red_done && !sfu_w_push && (wq_cnt < WQ);        // held until the FIFO takes it
     topk_w = '0;
@@ -337,7 +352,10 @@ module vec_unit
             ({$bits(wreq_t){topk_push}} & topk_w) | ({$bits(wreq_t){wo_push}} & wo_in);
     // write client
     wr_req = '0;
-    if (wq_cnt > 0) wr_req = slice_req(wq[wq_rd].sp, wq[wq_rd].slot, int'(wq[wq_rd].row), int'(wq[wq_rd].cg), 1'b1, wq[wq_rd].ben, wq[wq_rd].data);
+    if (wq_cnt > 0) begin
+      if (wq[wq_rd].cs) wr_req = col_req(wq[wq_rd].slot, int'(wq[wq_rd].cg), int'(wq[wq_rd].row), 1'b1, wq[wq_rd].ben, wq[wq_rd].data);
+      else wr_req = slice_req(wq[wq_rd].sp, wq[wq_rd].slot, int'(wq[wq_rd].row), int'(wq[wq_rd].cg), 1'b1, wq[wq_rd].ben, wq[wq_rd].data);
+    end
     wq_pop = (wq_cnt > 0) && wr_grant;
   end
 
@@ -384,8 +402,8 @@ module vec_unit
   // rows / slices of the current slot and the metadata index of the next VSCALE_ACC slot (combinational)
   int rows_here, cgs_here, next_si;
   always_comb begin
-    rows_here = (kind == K_SCALE) ? Mk : M;
-    cgs_here  = (kind == K_SCALE) ? n_cgk : n_cg;
+    rows_here = cs_mode ? n_rg : (kind == K_SCALE) ? Mk : M;      // cs_mode: row groups outside, columns inside
+    cgs_here  = cs_mode ? N : (kind == K_SCALE) ? n_cgk : n_cg;
     next_si   = slot_index(tref_sp(t_src), tref_slot(t_src) + 12'(s_slot + 1));
   end
 `define ADVANCE_SLICE \
@@ -395,7 +413,7 @@ module vec_unit
       if (kind == K_TOPK) begin \
         if (s_pass + 1 < n_pass) s_pass <= s_pass + 1; else s_done <= 1; \
       end else if (s_row + 1 < rows_here) begin \
-        s_row <= s_row + 1; s_vec_pending <= row_vec; \
+        s_row <= s_row + 1; s_vec_pending <= row_vec && (cs_mode || !vec_cs || ((s_row + 1) % BANKS == 0)); \
       end else if (kind == K_SCALE && s_slot + 1 < n_slots) begin \
         s_slot <= s_slot + 1; s_row <= 0; \
         Mk <= int'(meta[next_si].rows); Nk <= int'(meta[next_si].cols); n_cgk <= n_slices(int'(meta[next_si].cols)); \
@@ -409,11 +427,12 @@ module vec_unit
     if (!rst_n) begin
       st <= S_IDLE; cur <= '0; kind <= K_SUB; is_sfu <= 0; is_red <= 0; use_vec <= 0; use_imm <= 0; has_val <= 0; has_base <= 0;
       inplace <= 0; row_vec <= 0; write_slice <= 0; t_src <= '0; t_dst <= '0; t_vec <= '0; t_aux <= '0; t_val <= '0;
+      cs_mode <= 0; vec_cs <= 0; dst_2d <= 0; n_rg <= 0;
       M <= 0; N <= 0; n_cg <= 0; r0 <= 0; kk <= 0; n_pass <= 0; width_b <= 0; n_ops <= 0; n_slots <= 1; q_off <= 0; k_off <= 0; imm <= 0;
       s_slot <= 0; s_row <= 0; s_cg <= 0; s_op <= 0; s_pass <= 0; Mk <= 0; Nk <= 0; n_cgk <= 0; total_rd <= 0; got_rd <= 0;
       s_vec_pending <= 0; s_done <= 0; tagq[0] <= '0; tagq[1] <= '0; tag_cnt <= 0;
       wq_wr <= 0; wq_rd <= 0; wq_cnt <= 0;
-      op0 <= '0; op1 <= '0; partial <= '0; sfu_slice <= '0; acc_slice <= '0; exp_part_in <= '0; rowvec <= '0;
+      op0 <= '0; op1 <= '0; partial <= '0; sfu_slice <= '0; acc_slice <= '0; exp_part_in <= '0; rowvec_q <= '0;
       sfu_step <= 0; sfu_busy <= 0; sfu_tag <= '0; exp_sum_pending <= 0; red_fire <= 0; red_row <= 0; topk_push <= 0;
       red_busy <= 0; red_done <= 0; red_lvl <= 0; red_row_q <= 0; red_row_d <= 0; red_result <= '0;
       for (int n = 0; n < L; n++) red_reg[n] <= '0;
@@ -499,12 +518,22 @@ module vec_unit
           endcase
           kind <= kd; is_sfu <= sfu; is_red <= (kd == K_ROWMAX || kd == K_ROWSUM || kd == K_EXP2_SUM);
           n_ops <= nops; row_vec <= rv; write_slice <= ws; t_src <= src_t; t_dst <= dst_t;
+          // E2: column-slice order when every tile operand is a 2-D VEC tile and the kind is lane-independent
+          begin
+            logic all2d;
+            all2d = vec_is_2d(dst_t) && (nops == 0 || vec_is_2d(src_t)) &&
+                    (cur.op != OP_VSEL || (vec_is_2d(cur.c) && vec_is_2d(cur.d)));
+            cs_mode <= all2d && (kd == K_SUB || kd == K_MUL || kd == K_ADD || kd == K_MAX || kd == K_NEG || kd == K_COPY ||
+                                 kd == K_SEL || kd == K_EXP2 || kd == K_RCP || kd == K_LOG2 || kd == K_SIGMOID || kd == K_FILL);
+          end
+          vec_cs <= vec_is_2d((cur.op == OP_VEXP2_SUM) ? cur.c : (cur.op == OP_VSEL) ? cur.d : cur.b);
+          dst_2d <= vec_is_2d(dst_t);
           if (cur.op == OP_VFILL) begin m = int'(cur.c); n = int'(cur.d); end
           else begin
             m = int'(meta[slot_index(tref_sp(src_t), tref_slot(src_t))].rows);
             n = int'(meta[slot_index(tref_sp(src_t), tref_slot(src_t))].cols);
           end
-          M <= m; N <= n; n_cg <= n_slices(n); Mk <= m; Nk <= n; n_cgk <= n_slices(n);
+          M <= m; N <= n; n_cg <= n_slices(n); Mk <= m; Nk <= n; n_cgk <= n_slices(n); n_rg <= n_slices(m);
           s_slot <= 0; s_row <= 0; s_cg <= 0; s_op <= 0; s_pass <= 0; s_vec_pending <= rv;
           s_done <= (m == 0 || n == 0 || (kd == K_TOPK && cur.imm[31:16] == 0));
           total_rd <= 0; got_rd <= 0; selected <= '0; best_valid <= 0; best_v <= NEG_INF; best_i <= 0; count_acc <= 0;
@@ -535,7 +564,7 @@ module vec_unit
           // returned reads
           if (rd_rvalid) begin
             got_rd <= got_rd + 1;
-            if (rtag.vec) rowvec <= rd_rdata[0];
+            if (rtag.vec) begin if (vec_cs) rowvec_q <= rd_rdata; else for (int b = 0; b < L; b++) rowvec_q[b] <= rd_rdata[0]; end
             else begin
               if (rtag.op == 2'd0 && !rtag.last) op0 <= rd_rdata;
               if (rtag.op == 2'd1 && !rtag.last) op1 <= rd_rdata;
