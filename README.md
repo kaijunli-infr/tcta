@@ -49,3 +49,7 @@ python model/module0.py                         # headline chip/TCO config with 
 | `model/` | `module0.py` (workload, chip, TCO), `sweeps.py` (phase 5 sweeps), `sweeps_mlp.py` (phase 6: rings, cores, striping) and their results |
 | `docs/` | task statements per phase, verdicts, Gate 1 report, cycle-model report, expressivity and pass notes |
 | `tests/` | simulator, reference, cut, MoE, MLA/KDA/GEMM and cycle-model tests |
+| `external/chipDesign/` | git submodule: [AME-Chip](https://github.com/ChaseZhang-ai/chipDesign), an INT8 decode accelerator (RV32IM + MAC array, sky130hd) taken to a tapeout-candidate GDS on the open-source flow (Yosys / OpenROAD / KLayout / OpenRAM) by AI-agent sessions; a reference point for TCTA's own RTL and synthesis work |
+
+The submodule is not fetched by a plain clone: `git clone --recurse-submodules`,
+or `git submodule update --init` in an existing checkout.

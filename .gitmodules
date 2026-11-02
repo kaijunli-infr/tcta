@@ -1,0 +1,3 @@
+[submodule "external/chipDesign"]
+	path = external/chipDesign
+	url = https://github.com/ChaseZhang-ai/chipDesign
